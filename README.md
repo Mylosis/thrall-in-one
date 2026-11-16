@@ -16,7 +16,7 @@ It has the reminders you'd expect: a recast prompt when your thrall runs out, an
 - Covers every thrall, including the Leagues and Deadman variants.
 
 **Timer**
-- Seconds left shown above your thrall, turning orange as it runs out.
+- Seconds left shown above your thrall at the size you choose, turning orange as it runs out.
 - Matches the game's duration, including the Master Combat Achievement bonus, and carries on if the plugin restarts while your thrall is out.
 
 **Reminders**
@@ -43,6 +43,7 @@ Other plugins that hide, highlight or track thralls may not work well alongside 
 
 ## Changelog
 
+- **1.1.0:** Choose the timer's font size (Timer > Font Size).
 - **1.0.0:** First release.
 
 ## Credits

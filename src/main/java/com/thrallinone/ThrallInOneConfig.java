@@ -251,6 +251,20 @@ public interface ThrallInOneConfig extends Config
 
 	// Timer
 
+	@Range(min = ThrallTimerOverlay.MIN_FONT_SIZE, max = ThrallTimerOverlay.MAX_FONT_SIZE)
+	@Units(Units.PIXELS)
+	@ConfigItem(
+		keyName = "timerFontSize",
+		name = "Font Size",
+		description = "Size of the time left. 16 matches the game's own text; multiples of 16 stay the sharpest",
+		section = timerSection,
+		position = 0
+	)
+	default int timerFontSize()
+	{
+		return ThrallTimerOverlay.BASE_FONT_SIZE;
+	}
+
 	@Range(max = 60)
 	@Units(Units.SECONDS)
 	@ConfigItem(
@@ -258,7 +272,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Warn At",
 		description = "Turn the timer to the warning color with this many seconds left",
 		section = timerSection,
-		position = 0
+		position = 1
 	)
 	default int timerWarnSeconds()
 	{
@@ -270,7 +284,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Color",
 		description = "Color of the time left",
 		section = timerSection,
-		position = 1
+		position = 2
 	)
 	default Color timerColor()
 	{
@@ -282,7 +296,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Warning Color",
 		description = "Color of the time left near the end",
 		section = timerSection,
-		position = 2
+		position = 3
 	)
 	default Color timerWarnColor()
 	{
