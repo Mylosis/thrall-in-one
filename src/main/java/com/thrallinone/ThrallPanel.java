@@ -167,7 +167,7 @@ class ThrallPanel extends PluginPanel
 		}
 
 		showSession(new FightTotals(), 0);
-		showCasts(-1, ThrallTier.GREATER, false, true);
+		showCasts(true, -1, ThrallTier.GREATER, false, true);
 		showRecords(new ThrallRecords());
 	}
 
@@ -203,9 +203,10 @@ class ThrallPanel extends PluginPanel
 		return buttons;
 	}
 
-	/** Casts left for the tier we'd cast next; -1 before it's counted. Swing thread. */
-	void showCasts(int left, ThrallTier tier, boolean low, boolean canSummon)
+	/** Casts left for the tier we'd cast next; -1 before it's counted. Hidden while Casts Left is off. Swing thread. */
+	void showCasts(boolean enabled, int left, ThrallTier tier, boolean low, boolean canSummon)
 	{
+		castsBox.setVisible(enabled);
 		JPanel content = new JPanel(new DynamicGridLayout(0, 1, 0, 6));
 		content.setOpaque(false);
 		Tile tile = new Tile(ColorScheme.DARK_GRAY_COLOR, false);

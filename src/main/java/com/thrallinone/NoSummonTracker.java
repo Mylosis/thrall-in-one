@@ -126,7 +126,6 @@ public class NoSummonTracker
 		{
 			return;
 		}
-		// Logged so the exact wording of the can't-summon line can be captured in game.
 		log.debug("Thrall game message ({}) in region {}: {}", type, regionId, message);
 
 		if (NoSummonAreas.isCantSummonMessage(message) && regionId >= 0 && !onBoat

@@ -125,17 +125,18 @@ public class ThrallCasts
 		{
 			return;
 		}
+		boolean enabled = config.castsEnabled();
 		int left = castsLeft;
 		ThrallTier tier = getNextTier();
 		boolean low = isLow();
 		boolean summon = canSummon;
-		String shown = left + "/" + tier + "/" + low + "/" + summon;
+		String shown = enabled + "/" + left + "/" + tier + "/" + low + "/" + summon;
 		if (shown.equals(pushed))
 		{
 			return;
 		}
 		pushed = shown;
-		SwingUtilities.invokeLater(() -> target.showCasts(left, tier, low, summon));
+		SwingUtilities.invokeLater(() -> target.showCasts(enabled, left, tier, low, summon));
 	}
 
 	/**
@@ -152,6 +153,11 @@ public class ThrallCasts
 		else if (!lowNotified && canSummon && isLow() && (tracker.hasActiveThrall() || reminders.isInCombat()))
 		{
 			lowNotified = true;
+			// Counts as sent while off, so turning Casts Left back on doesn't fire for an old drop.
+			if (!config.castsEnabled())
+			{
+				return;
+			}
 			notifier.notify(config.lowCastsNotification(), castsLeft == 0
 				? "No thrall casts left"
 				: "Low on thrall casts: " + castsLeft + " left");
@@ -181,7 +187,7 @@ public class ThrallCasts
 	public void onConfigChanged(ConfigChanged event)
 	{
 		if (ThrallInOneConfig.GROUP.equals(event.getGroup())
-			&& "castsWarnBelow".equals(event.getKey()))
+			&& ("castsWarnBelow".equals(event.getKey()) || "castsEnabled".equals(event.getKey())))
 		{
 			dirty = true;
 		}

@@ -41,6 +41,10 @@ class ThrallTimerOverlay extends Overlay
 	@Override
 	public Dimension render(Graphics2D graphics)
 	{
+		if (!config.timerEnabled())
+		{
+			return null;
+		}
 		NPC thrall = tracker.getOwned();
 		int remaining = timer.getRemainingTicks();
 		if (thrall == null || remaining < 0)

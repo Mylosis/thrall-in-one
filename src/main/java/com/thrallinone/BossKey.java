@@ -14,6 +14,7 @@ final class BossKey
 	static final String COX = "Chambers of Xeric";
 	static final String TOB = "Theatre of Blood";
 	static final String TOA = "Tombs of Amascut";
+	static final String TFA = "The Fractured Archive";
 
 	/** Maiden, Bloat, Nylocas, Sotetseg (and its maze), Xarpus, Verzik. */
 	private static final Set<Integer> TOB_REGIONS = ImmutableSet.of(12613, 13125, 13122, 13123, 13379, 12612, 12611);
@@ -26,8 +27,13 @@ final class BossKey
 		15186, 15188,
 		15184, 15696,
 		14672);
+	/** The nexus (with the Archive Guardian), Ocellus, Ezekiel, the Dagon'hai, Moia, Xarth, Bork and Dreadnoth. */
+	private static final Set<Integer> TFA_REGIONS = ImmutableSet.of(
+		16471, 16472,
+		16214, 16215, 16216,
+		16726, 16727, 16728);
 
-	private static final Set<String> RAIDS = ImmutableSet.of(COX, TOB, TOA);
+	private static final Set<String> RAIDS = ImmutableSet.of(COX, TOB, TOA, TFA);
 
 	private BossKey()
 	{
@@ -54,6 +60,10 @@ final class BossKey
 		if (TOA_REGIONS.contains(templateRegion))
 		{
 			return TOA;
+		}
+		if (TFA_REGIONS.contains(templateRegion))
+		{
+			return TFA;
 		}
 		return null;
 	}

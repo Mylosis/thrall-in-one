@@ -66,8 +66,8 @@ public class ThrallTracker
 
 	private final Client client;
 
-	/** Every thrall in the scene, with the tick it appeared. */
-	private final Map<NPC, Integer> thralls = new IdentityHashMap<>();
+	/** Every thrall in the scene, with when and where it appeared. */
+	private final Map<NPC, Sighting> thralls = new IdentityHashMap<>();
 	/** Thralls we have seen interact with another player: never ours. */
 	private final Set<NPC> rejected = Collections.newSetFromMap(new IdentityHashMap<>());
 
@@ -182,7 +182,7 @@ public class ThrallTracker
 		NPC npc = event.getNpc();
 		if (ThrallType.isThrall(npc.getId()))
 		{
-			thralls.put(npc, client.getTickCount());
+			thralls.put(npc, sight(npc));
 			logSpawn("spawned", npc);
 			if (!tryClaimAtSpawn(npc))
 			{
@@ -206,10 +206,23 @@ public class ThrallTracker
 			return false;
 		}
 
+		// In case the graphic's event was missed, look at our graphics now.
+		noteCastGraphic(me);
 		int sinceCast = client.getTickCount() - myCastTick;
 		if (myCastTick >= 0 && sinceCast >= 0 && sinceCast <= MY_CAST_TO_SPAWN_TICKS)
 		{
-			return claimFromCast(npc, me);
+			if (claimFromCast(npc, me))
+			{
+				return true;
+			}
+			log.debug("Thrall {} spawned {} tick(s) after our cast but wasn't claimed: type {} (cast {}), {} tiles away{}",
+				npc.getIndex(), sinceCast, ThrallType.of(npc.getId()), myCastType,
+				distanceFromUs(me, npc.getWorldLocation()), npc == owned ? ", already ours" : "");
+		}
+		else if (myCastTick >= 0 && sinceCast > MY_CAST_TO_SPAWN_TICKS && sinceCast <= SAME_CAST_TICKS)
+		{
+			// Ours arriving late would show up here.
+			log.debug("Thrall {} spawned {} ticks after our cast, too late to claim from it", npc.getIndex(), sinceCast);
 		}
 		return false;
 	}
@@ -227,14 +240,16 @@ public class ThrallTracker
 		{
 			return false;
 		}
-		int distance = npc.getWorldLocation().distanceTo(me.getWorldLocation());
+		int distance = distanceFromUs(me, npc.getWorldLocation());
 		if (distance > ThrallClaim.CAST_RADIUS)
 		{
 			return false;
 		}
 
 		int tick = client.getTickCount();
-		int spawnOffset = thralls.getOrDefault(npc, tick) - myCastTick;
+		Sighting sighting = thralls.get(npc);
+		int spawnTick = sighting == null ? tick : sighting.tick;
+		int spawnOffset = spawnTick - myCastTick;
 		if (owned != null)
 		{
 			if (castClaimCastTick == myCastTick)
@@ -252,7 +267,7 @@ public class ThrallTracker
 			}
 		}
 		claim(npc, "your cast");
-		ownedSpawnTick = thralls.getOrDefault(npc, tick);
+		ownedSpawnTick = spawnTick;
 		castClaimTick = tick;
 		castClaimCastTick = myCastTick;
 		castClaimSpawnOffset = spawnOffset;
@@ -272,32 +287,19 @@ public class ThrallTracker
 			return;
 		}
 
-		for (Map.Entry<Integer, ThrallType> cast : CAST_SPOTANIMS.entrySet())
+		if (noteCastGraphic(me))
 		{
-			if (me.hasSpotAnim(cast.getKey()))
+			// In game the graphic arrived just before the spawn in the same
+			// tick; if the order is ever the other way round, the thrall is
+			// already here.
+			for (Map.Entry<NPC, Sighting> entry : new ArrayList<>(thralls.entrySet()))
 			{
-				int tick = client.getTickCount();
-				if (cast.getValue() == myCastType && myCastTick >= 0 && tick - myCastTick < SAME_CAST_TICKS)
+				if (entry.getValue().tick == myCastTick && !rejected.contains(entry.getKey()))
 				{
-					// The same cast's graphic, seen again as another graphic changed
-					// on us; moving the cast tick would widen the claim window.
-					return;
+					claimFromCast(entry.getKey(), me);
 				}
-				myCastTick = tick;
-				myCastType = cast.getValue();
-				log.debug("Our resurrect cast graphic {} at tick {}", cast.getKey(), myCastTick);
-				// In game the graphic arrived just before the spawn in the same
-				// tick; if the order is ever the other way round, the thrall is
-				// already here.
-				for (Map.Entry<NPC, Integer> entry : new ArrayList<>(thralls.entrySet()))
-				{
-					if (entry.getValue() == myCastTick && !rejected.contains(entry.getKey()))
-					{
-						claimFromCast(entry.getKey(), me);
-					}
-				}
-				return;
 			}
+			return;
 		}
 
 		if (log.isDebugEnabled())
@@ -309,6 +311,29 @@ public class ThrallTracker
 			}
 			log.debug("Our spotanims at tick {}: {}", client.getTickCount(), ids);
 		}
+	}
+
+	/** Record a Resurrect cast graphic on us; true if it is a new cast. */
+	private boolean noteCastGraphic(Player me)
+	{
+		for (Map.Entry<Integer, ThrallType> cast : CAST_SPOTANIMS.entrySet())
+		{
+			if (me.hasSpotAnim(cast.getKey()))
+			{
+				int tick = client.getTickCount();
+				if (cast.getValue() == myCastType && myCastTick >= 0 && tick - myCastTick < SAME_CAST_TICKS)
+				{
+					// The same cast's graphic, seen again as another graphic changed
+					// on us; moving the cast tick would widen the claim window.
+					return false;
+				}
+				myCastTick = tick;
+				myCastType = cast.getValue();
+				log.debug("Our resurrect cast graphic {} at tick {}", cast.getKey(), myCastTick);
+				return true;
+			}
+		}
+		return false;
 	}
 
 	@Subscribe
@@ -327,8 +352,9 @@ public class ThrallTracker
 		NPC npc = event.getNpc();
 		if (ThrallType.isThrall(npc.getId()))
 		{
-			if (thralls.putIfAbsent(npc, client.getTickCount()) == null)
+			if (!thralls.containsKey(npc))
 			{
+				thralls.put(npc, sight(npc));
 				logSpawn("changed into a thrall", npc);
 			}
 			tryClaim();
@@ -470,13 +496,13 @@ public class ThrallTracker
 			return;
 		}
 
-		Map<NPC, Integer> previous = new IdentityHashMap<>(thralls);
+		Map<NPC, Sighting> previous = new IdentityHashMap<>(thralls);
 		thralls.clear();
 		for (NPC npc : wv.npcs())
 		{
 			if (npc != null && ThrallType.isThrall(npc.getId()))
 			{
-				thralls.put(npc, previous.getOrDefault(npc, UNKNOWN_SPAWN_TICK));
+				thralls.put(npc, previous.getOrDefault(npc, Sighting.UNKNOWN));
 			}
 		}
 		rejected.retainAll(thralls.keySet());
@@ -565,23 +591,38 @@ public class ThrallTracker
 
 		WorldPoint myLocation = me.getWorldLocation();
 		List<ThrallClaim.Candidate<NPC>> candidates = new ArrayList<>();
-		for (Map.Entry<NPC, Integer> entry : thralls.entrySet())
+		for (Map.Entry<NPC, Sighting> entry : thralls.entrySet())
 		{
 			NPC npc = entry.getKey();
 			if (rejected.contains(npc) || npc.isDead())
 			{
 				continue;
 			}
-			WorldPoint npcLocation = npc.getWorldLocation();
-			int distance = npcLocation.distanceTo(myLocation);
+			Sighting sighting = entry.getValue();
 			Actor target = npc.getInteracting();
-			int spawnOffset = castTick >= 0 ? entry.getValue() - castTick : UNKNOWN_SPAWN_TICK;
+			int spawnOffset = castTick >= 0 ? sighting.tick - castTick : UNKNOWN_SPAWN_TICK;
+			int distance;
+			boolean otherPlayerAsClose;
+			if (mode == ThrallClaim.Mode.FRESH_CAST && sighting.distance >= 0)
+			{
+				// By the time the varbit turns on (five ticks after the spawn) a
+				// thrall may have run off to attack something, so judge a fresh
+				// cast by where it appeared, which is beside its caster.
+				distance = sighting.distance;
+				otherPlayerAsClose = sighting.otherPlayerAsClose;
+			}
+			else
+			{
+				WorldPoint npcLocation = npc.getWorldLocation();
+				distance = npcLocation.distanceTo(myLocation);
+				otherPlayerAsClose = isOtherPlayerAsClose(me, npc.getWorldView(), npcLocation, distance);
+			}
 			candidates.add(new ThrallClaim.Candidate<>(
 				npc,
 				distance,
 				target == me,
 				target instanceof Player && target != me,
-				isOtherPlayerAsClose(me, npc.getWorldView(), npcLocation, distance),
+				otherPlayerAsClose,
 				spawnOffset));
 		}
 
@@ -594,6 +635,35 @@ public class ThrallTracker
 		{
 			log.debug("Tick {} (cast {}): no thrall claimed from {}", tick, castTick, candidates);
 		}
+	}
+
+	/** When and where a thrall appeared, read the moment we first see it. */
+	private Sighting sight(NPC npc)
+	{
+		int tick = client.getTickCount();
+		Player me = client.getLocalPlayer();
+		if (me == null)
+		{
+			return new Sighting(tick, -1, false);
+		}
+		WorldPoint npcLocation = npc.getWorldLocation();
+		int distance = distanceFromUs(me, npcLocation);
+		return new Sighting(tick, distance, isOtherPlayerAsClose(me, npc.getWorldView(), npcLocation, distance));
+	}
+
+	/**
+	 * Tiles from us to a thrall that may have just been raised. We can cast
+	 * while running, two tiles a tick, so the thrall may rise where we stood
+	 * at the start of this tick rather than where we are now.
+	 */
+	private int distanceFromUs(Player me, WorldPoint location)
+	{
+		int distance = location.distanceTo(me.getWorldLocation());
+		if (lastPlayerLocation != null)
+		{
+			distance = Math.min(distance, location.distanceTo(lastPlayerLocation));
+		}
+		return distance;
 	}
 
 	private boolean isOtherPlayerAsClose(Player me, @Nullable WorldView wv, WorldPoint npcLocation, int myDistance)
@@ -667,10 +737,30 @@ public class ThrallTracker
 		}
 		Player me = client.getLocalPlayer();
 		Actor target = npc.getInteracting();
-		log.debug("Thrall {} id={} index={} tick={} castTick={} myCastTick={} varbit={} distance={} interacting={}",
+		Sighting sighting = thralls.get(npc);
+		log.debug("Thrall {} id={} index={} tick={} castTick={} myCastTick={} varbit={} distance={} otherAsClose={} interacting={}",
 			what, npc.getId(), npc.getIndex(), client.getTickCount(), castTick, myCastTick, active,
-			me == null ? -1 : npc.getWorldLocation().distanceTo(me.getWorldLocation()),
+			sighting == null ? -1 : sighting.distance, sighting != null && sighting.otherPlayerAsClose,
 			target == null ? "none" : target == me ? "you" : target.getName());
+	}
+
+	private static final class Sighting
+	{
+		/** For thralls found by a rescan: never a fresh cast, place unknown. */
+		static final Sighting UNKNOWN = new Sighting(UNKNOWN_SPAWN_TICK, -1, false);
+
+		final int tick;
+		/** Tiles from us when it appeared, or -1 if unknown. */
+		final int distance;
+		/** Another player stood at least as close to it when it appeared. */
+		final boolean otherPlayerAsClose;
+
+		Sighting(int tick, int distance, boolean otherPlayerAsClose)
+		{
+			this.tick = tick;
+			this.distance = distance;
+			this.otherPlayerAsClose = otherPlayerAsClose;
+		}
 	}
 
 	private static boolean isInScene(NPC npc)

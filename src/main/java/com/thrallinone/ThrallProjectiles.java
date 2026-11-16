@@ -6,6 +6,7 @@ import java.util.IdentityHashMap;
 import java.util.Set;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.NPC;
 import net.runelite.api.Perspective;
 import net.runelite.api.Projectile;
@@ -23,6 +24,7 @@ import net.runelite.client.eventbus.Subscribe;
  * judged once, when it is fired: a thrall projectile that doesn't start on our
  * thrall's tile is someone else's.
  */
+@Slf4j
 @Singleton
 public class ThrallProjectiles
 {
@@ -84,6 +86,9 @@ public class ThrallProjectiles
 		if (owned == null || !startsAt(projectile, owned))
 		{
 			others.add(projectile);
+			// With no thrall claimed, a projectile from ours would wrongly count as someone else's.
+			log.debug("Thrall projectile {} judged someone else's ({})", projectile.getId(),
+				owned == null ? "no thrall claimed" : "not from our thrall's tile");
 		}
 	}
 

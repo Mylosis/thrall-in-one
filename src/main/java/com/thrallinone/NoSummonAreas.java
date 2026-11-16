@@ -56,16 +56,16 @@ final class NoSummonAreas
 	);
 
 	/**
-	 * The game's line when a thrall can't be resurrected where you stand. Not yet
-	 * captured in game; two wordings are reported: "You can't resurrect a thrall
-	 * here." (Chasm of Fire) and "The ground is too soft to resurrect a thrall
-	 * here." (Jormungand's Prison). Both say "resurrect", "thrall" and "here", so
-	 * match on those.
+	 * The game's line when a thrall can't be resurrected where you stand. It has
+	 * more than one wording, such as "You can't resurrect a thrall here." (Chasm
+	 * of Fire) and "The ground is too soft to resurrect a thrall here."
+	 * (Jormungand's Prison). Both say "resurrect", "thrall" and "here", so match
+	 * on those.
 	 */
 	static final Pattern CANT_SUMMON_MESSAGE = Pattern.compile("\\bresurrect\\b.*\\bthralls?\\b.*\\bhere\\b",
 		Pattern.CASE_INSENSITIVE);
 
-	/** Game messages worth logging while the wording above is unconfirmed. */
+	/** Game messages about thralls, for debug logging. */
 	private static final Pattern THRALL_MESSAGE = Pattern.compile("thrall|resurrect", Pattern.CASE_INSENSITIVE);
 
 	private NoSummonAreas()

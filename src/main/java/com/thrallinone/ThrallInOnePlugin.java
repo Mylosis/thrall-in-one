@@ -91,6 +91,9 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 	@Inject
 	private ThrallProjectiles projectiles;
 
+	@Inject
+	private ThrallSounds sounds;
+
 	// Fight stats and the sidebar panel
 	@Inject
 	private ThrallFights fights;
@@ -123,6 +126,8 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 		eventBus.register(noSummon);
 		eventBus.register(casts);
 		eventBus.register(projectiles);
+		sounds.reset();
+		eventBus.register(sounds);
 		clientThread.invoke(() ->
 		{
 			tracker.start();
@@ -220,6 +225,7 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 		eventBus.unregister(noSummon);
 		eventBus.unregister(casts);
 		eventBus.unregister(projectiles);
+		eventBus.unregister(sounds);
 		clientThread.invoke(() ->
 		{
 			tracker.stop();

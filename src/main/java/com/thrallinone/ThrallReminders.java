@@ -100,17 +100,20 @@ public class ThrallReminders
 	public boolean showExpired()
 	{
 		return previewing(PreviewReminder.RECAST)
-			|| config.recastBox() != RecastBox.OFF && expiredTick >= 0 && !active && isInCombat() && canSummonHere();
+			|| config.remindersEnabled() && config.recastBox() != RecastBox.OFF
+				&& expiredTick >= 0 && !active && isInCombat() && canSummonHere();
 	}
 
 	public boolean showWrongSpellbook()
 	{
-		return previewing(PreviewReminder.SPELLBOOK) || config.summonCheck() && wrongSpellbook && warningApplies();
+		return previewing(PreviewReminder.SPELLBOOK)
+			|| config.remindersEnabled() && config.summonCheck() && wrongSpellbook && warningApplies();
 	}
 
 	public boolean showMissingBook()
 	{
-		return previewing(PreviewReminder.BOOK) || config.bookWarning() && missingBook && warningApplies();
+		return previewing(PreviewReminder.BOOK)
+			|| config.remindersEnabled() && config.bookWarning() && missingBook && warningApplies();
 	}
 
 	/**
@@ -245,11 +248,15 @@ public class ThrallReminders
 		}
 
 		// Once per expiry, as soon as we're fighting without a thrall somewhere we could summon one.
+		// With reminders off it still counts as sent, so turning them back on mid-fight doesn't fire a stale one.
 		if (expiredTick >= 0 && !active && !expiryNotified && isInCombat() && canSummonHere())
 		{
 			expiryNotified = true;
-			log.debug("Expiry notification at tick {}, {} ticks after the expiry", tick, tick - expiredTick);
-			notifier.notify(config.expiryNotification(), "Your thrall has expired");
+			if (config.remindersEnabled())
+			{
+				log.debug("Expiry notification at tick {}, {} ticks after the expiry", tick, tick - expiredTick);
+				notifier.notify(config.expiryNotification(), "Your thrall has expired");
+			}
 		}
 
 		wrongSpellbook = config.summonCheck() && client.getVarbitValue(VarbitID.SPELLBOOK) != ARCEUUS_SPELLBOOK;

@@ -28,7 +28,7 @@ dependencies {
 }
 
 group = 'com.thrallinone'
-version = '1.1.0'
+version = '1.2.0'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
@@ -37,9 +37,17 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.register('run', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
-	mainClass = pluginMainClass
+	// Another launcher from the test sources: ./gradlew run -PrunMain=<class>
+	mainClass = project.findProperty('runMain') ?: pluginMainClass
 
 	jvmArgs "-ea"
+	// Assertions stay off in the GPU plugin, as in release builds.
+	jvmArgs "-da:net.runelite.client.plugins.gpu..."
+	// Match the launcher's UI scale setting: ./gradlew run -PuiScale=1.25
+	if (project.hasProperty('uiScale'))
+	{
+		jvmArgs "-Dsun.java2d.uiScale=${project.uiScale}"
+	}
 	args "--developer-mode", "--debug"
 }
 

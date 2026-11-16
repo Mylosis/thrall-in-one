@@ -13,6 +13,7 @@ It has the reminders you'd expect: a recast prompt when your thrall runs out, an
 **Your thrall, and everyone else's**
 - Outline yours, and hide or fade other players' thralls and their projectiles. Each has its own look and color, or colors by type (Mage, Ranged, Melee).
 - The outline follows the thrall's body only, without the square around its feet.
+- Mute thralls' attack sounds (other players' only, or every thrall), and the sounds of thralls rising and returning to the grave.
 - Covers every thrall, including the Leagues and Deadman variants.
 
 **Timer**
@@ -43,6 +44,7 @@ Other plugins that hide, highlight or track thralls may not work well alongside 
 
 ## Changelog
 
+- **1.2.0:** Mute thrall attack and summon sounds (Thralls > Mute Attacks, Mute Summon Sounds), and an Enabled tick for Timer, Reminders and Casts Left.
 - **1.1.0:** Choose the timer's font size (Timer > Font Size).
 - **1.0.0:** First release.
 

@@ -145,11 +145,21 @@ public class ThrallFights
 	{
 		Actor target = event.getActor();
 		int tick = client.getTickCount();
-		if (!event.getHitsplat().isMine() || !(target instanceof NPC) || justDied(tick))
+		if (!event.getHitsplat().isMine() || !(target instanceof NPC) || !isNamed(target.getName()) || justDied(tick))
 		{
 			return;
 		}
 		fightAt(tick).hit(tick, target, target.getName(), event.getHitsplat().getAmount());
+	}
+
+	/**
+	 * Unnamed NPCs are hidden helpers we never attack, like the body behind
+	 * Ocellus's second phase. Our hitsplats on them are bookkeeping, not damage,
+	 * and would otherwise count as fights of their own.
+	 */
+	static boolean isNamed(@Nullable String name)
+	{
+		return name != null && !name.isEmpty() && !"null".equals(name);
 	}
 
 	/** One of our hitsplats that {@link ThrallDamage} matched to our thrall's attack. */
@@ -180,7 +190,7 @@ public class ThrallFights
 			// Where no thrall can be summoned, not having one out isn't a lapse.
 			thrallOutBeforeFight = thrallOut() || recentThrall && !noSummon.isNoSummonHere();
 			targetDiedTick = -1;
-			log.debug("Fight started at tick {} (raid {})", tick, current.getRaid());
+			log.debug("Fight started at tick {} (raid {}, template region {})", tick, current.getRaid(), templateRegion());
 		}
 		return current;
 	}
@@ -188,14 +198,16 @@ public class ThrallFights
 	@Nullable
 	private String currentRaid()
 	{
-		Player me = client.getLocalPlayer();
-		if (me == null)
-		{
-			return null;
-		}
-		WorldPoint location = WorldPoint.fromLocalInstance(client, me.getLocalLocation());
 		boolean inChambers = client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) == 1;
-		return BossKey.raid(inChambers, location == null ? -1 : location.getRegionID());
+		return BossKey.raid(inChambers, templateRegion());
+	}
+
+	/** The region we stand in, as the map has it outside instances; -1 if unknown. */
+	private int templateRegion()
+	{
+		Player me = client.getLocalPlayer();
+		WorldPoint location = me == null ? null : WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+		return location == null ? -1 : location.getRegionID();
 	}
 
 	@Subscribe

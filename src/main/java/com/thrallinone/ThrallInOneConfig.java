@@ -96,7 +96,7 @@ public interface ThrallInOneConfig extends Config
 	)
 	default OwnThrallShow ownShow()
 	{
-		return OwnThrallShow.OUTLINE_AND_MODEL;
+		return OwnThrallShow.OUTLINE_ONLY;
 	}
 
 	@Alpha
@@ -136,6 +136,31 @@ public interface ThrallInOneConfig extends Config
 	default Color othersColor()
 	{
 		return new Color(255, 255, 255, 90);
+	}
+
+	@ConfigItem(
+		keyName = "muteThralls",
+		name = "Mute Attacks",
+		description = "Silence thralls' attack sounds: other players' thralls only, or every thrall",
+		section = thrallsSection,
+		position = 4
+	)
+	default MuteThralls muteThralls()
+	{
+		return MuteThralls.OFF;
+	}
+
+	@ConfigItem(
+		keyName = "muteSummonSounds",
+		name = "Mute Summon Sounds",
+		description = "Silence thralls being raised (the Resurrect spell's sound) and returning to the grave,"
+			+ " including the Leagues imps' arrivals and departures",
+		section = thrallsSection,
+		position = 5
+	)
+	default boolean muteSummonSounds()
+	{
+		return false;
 	}
 
 	// Outline
@@ -249,7 +274,19 @@ public interface ThrallInOneConfig extends Config
 		return new Color(230, 70, 70, 90);
 	}
 
-	// Timer
+	// Timer. Each feature section opens with its own Enabled tick, on by default.
+
+	@ConfigItem(
+		keyName = "timerEnabled",
+		name = "Enabled",
+		description = "Show the time left above your thrall",
+		section = timerSection,
+		position = 0
+	)
+	default boolean timerEnabled()
+	{
+		return true;
+	}
 
 	@Range(min = ThrallTimerOverlay.MIN_FONT_SIZE, max = ThrallTimerOverlay.MAX_FONT_SIZE)
 	@Units(Units.PIXELS)
@@ -258,7 +295,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Font Size",
 		description = "Size of the time left. 16 matches the game's own text; multiples of 16 stay the sharpest",
 		section = timerSection,
-		position = 0
+		position = 1
 	)
 	default int timerFontSize()
 	{
@@ -272,7 +309,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Warn At",
 		description = "Turn the timer to the warning color with this many seconds left",
 		section = timerSection,
-		position = 1
+		position = 2
 	)
 	default int timerWarnSeconds()
 	{
@@ -284,7 +321,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Color",
 		description = "Color of the time left",
 		section = timerSection,
-		position = 2
+		position = 3
 	)
 	default Color timerColor()
 	{
@@ -296,7 +333,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Warning Color",
 		description = "Color of the time left near the end",
 		section = timerSection,
-		position = 3
+		position = 4
 	)
 	default Color timerWarnColor()
 	{
@@ -307,11 +344,23 @@ public interface ThrallInOneConfig extends Config
 	// Reminders
 
 	@ConfigItem(
+		keyName = "remindersEnabled",
+		name = "Enabled",
+		description = "Turn every reminder below on or off at once. Fight Ends After still applies to fight stats",
+		section = remindersSection,
+		position = 0
+	)
+	default boolean remindersEnabled()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "recastBox",
 		name = "Recast Box",
 		description = "A \"Recast Thrall\" box above the chatbox while you fight without a thrall",
 		section = remindersSection,
-		position = 0
+		position = 1
 	)
 	default RecastBox recastBox()
 	{
@@ -323,7 +372,7 @@ public interface ThrallInOneConfig extends Config
 		name = "Box Color",
 		description = "Fill color of the Recast Thrall box (unused while Recast Box is Off)",
 		section = remindersSection,
-		position = 1
+		position = 2
 	)
 	default Color expiredBoxColor()
 	{
@@ -336,11 +385,11 @@ public interface ThrallInOneConfig extends Config
 		description = "An amber \"Not on the Arceuus Spellbook\" box when you're not on the Arceuus spellbook,"
 			+ " while fighting within 10 minutes of having a thrall out",
 		section = remindersSection,
-		position = 2
+		position = 3
 	)
 	default boolean summonCheck()
 	{
-		return true;
+		return false;
 	}
 
 	@ConfigItem(
@@ -349,7 +398,7 @@ public interface ThrallInOneConfig extends Config
 		description = "An amber \"No Book of the Dead\" box when you don't have the Book of the Dead with you,"
 			+ " while fighting within 10 minutes of having a thrall out",
 		section = remindersSection,
-		position = 3
+		position = 4
 	)
 	default boolean bookWarning()
 	{
@@ -363,7 +412,7 @@ public interface ThrallInOneConfig extends Config
 			+ " on a boat, quest bosses that block thralls (Galvek, Vanstrom Klause and others), and anywhere"
 			+ " the game has told you that you can't resurrect a thrall",
 		section = remindersSection,
-		position = 4
+		position = 5
 	)
 	default boolean quietWhereNoSummon()
 	{
@@ -378,7 +427,7 @@ public interface ThrallInOneConfig extends Config
 		description = "You count as fighting while you attack an NPC, and until this long after your last hit"
 			+ " or a hit on you. Reminders and fight stats both use it",
 		section = remindersSection,
-		position = 5
+		position = 6
 	)
 	default int combatTimeoutSeconds()
 	{
@@ -392,7 +441,7 @@ public interface ThrallInOneConfig extends Config
 			+ " RuneLite only sends it while the game isn't focused, unless you turn on Send When Focused."
 			+ " The cog sets sound, tray and flash",
 		section = remindersSection,
-		position = 6
+		position = 7
 	)
 	default Notification expiryNotification()
 	{
@@ -400,6 +449,18 @@ public interface ThrallInOneConfig extends Config
 	}
 
 	// Casts Left
+
+	@ConfigItem(
+		keyName = "castsEnabled",
+		name = "Enabled",
+		description = "Show casts left in the sidebar panel, and allow the Low-Casts Notification",
+		section = castsSection,
+		position = 0
+	)
+	default boolean castsEnabled()
+	{
+		return true;
+	}
 
 	@Range(min = 1, max = 100)
 	@Units(" casts")
@@ -409,7 +470,7 @@ public interface ThrallInOneConfig extends Config
 		description = "Casts left counts as low when fewer than this are left: orange in the sidebar panel,"
 			+ " and the Low-Casts Notification",
 		section = castsSection,
-		position = 0
+		position = 1
 	)
 	default int castsWarnBelow()
 	{
@@ -422,7 +483,7 @@ public interface ThrallInOneConfig extends Config
 		description = "Notify once when casts left drops below Low Below, while your thrall is out or you're fighting."
 			+ " It fires again only after you've restocked above the mark",
 		section = castsSection,
-		position = 1
+		position = 2
 	)
 	default Notification lowCastsNotification()
 	{
