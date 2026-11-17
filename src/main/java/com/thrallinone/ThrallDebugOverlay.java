@@ -61,7 +61,8 @@ class ThrallDebugOverlay extends Overlay
 
 		if (me != null)
 		{
-			String state = !tracker.hasActiveThrall() ? "no thrall out"
+			String state = tracker.isLeftBehind() ? "thrall left behind"
+				: !tracker.hasActiveThrall() ? "no thrall out"
 				: tracker.getOwned() == null ? "thrall out, not found" : "thrall found";
 			OverlayUtil.renderActorOverlay(graphics, me, "Thrall In One: " + state, OTHER);
 		}

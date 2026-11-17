@@ -59,6 +59,26 @@ final class ThrallNpcs
 		return npcId >= MIN_ID && npcId <= MAX_ID && TYPES.containsKey(npcId);
 	}
 
+	/** The Leagues imp cosmetics, which have attack sounds of their own. */
+	static boolean isImp(int npcId)
+	{
+		switch (npcId)
+		{
+			case NpcID.THRALL_IMP_MAGIC_LESSER:
+			case NpcID.THRALL_IMP_MAGIC_SUPERIOR:
+			case NpcID.THRALL_IMP_MAGIC_GREATER:
+			case NpcID.THRALL_IMP_RANGED_LESSER:
+			case NpcID.THRALL_IMP_RANGED_SUPERIOR:
+			case NpcID.THRALL_IMP_RANGED_GREATER:
+			case NpcID.THRALL_IMP_MELEE_LESSER:
+			case NpcID.THRALL_IMP_MELEE_SUPERIOR:
+			case NpcID.THRALL_IMP_MELEE_GREATER:
+				return true;
+			default:
+				return false;
+		}
+	}
+
 	@Nullable
 	static ThrallType type(int npcId)
 	{

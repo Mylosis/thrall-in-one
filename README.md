@@ -44,6 +44,7 @@ Other plugins that hide, highlight or track thralls may not work well alongside 
 
 ## Changelog
 
+- **1.2.1:** The Fractured Archive now counts as a raid. Big numbers in the sidebar are no longer cut off. A thrall left behind in another raid room now counts as gone, so the recast reminder shows.
 - **1.2.0:** Mute thrall attack and summon sounds (Thralls > Mute Attacks, Mute Summon Sounds), and an Enabled tick for Timer, Reminders and Casts Left.
 - **1.1.0:** Choose the timer's font size (Timer > Font Size).
 - **1.0.0:** First release.

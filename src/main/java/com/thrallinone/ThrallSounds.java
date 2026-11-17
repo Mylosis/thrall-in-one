@@ -2,13 +2,12 @@ package com.thrallinone;
 
 import com.google.common.collect.ImmutableSet;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Singleton;
-import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
 import net.runelite.api.NPC;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.events.AreaSoundEffectPlayed;
@@ -26,13 +25,13 @@ import net.runelite.client.events.ProfileChanged;
  * alone. The Deadman thralls (Zuk, Kalphite Princess and Wisp) have no sounds
  * of their own in the game's data, so they are covered by the standard ones.
  */
-@Slf4j
 @Singleton
 public class ThrallSounds
 {
 	/**
 	 * Attack sounds that other things share, so muted only on a thrall's tile:
 	 * ghostly "waterstrike_cast_and_fire", skeletal "longbow", zombified "zombie_attack".
+	 * The imps play them too.
 	 */
 	static final Set<Integer> SHARED_ATTACK_SOUNDS = ImmutableSet.of(211, 2700, 918);
 	/**
@@ -61,16 +60,12 @@ public class ThrallSounds
 	private static final int SOUND_TILES = 1;
 	/** An imp's projectile sound can play this far from the imp that fired it. */
 	private static final int PROJECTILE_TILES = 10;
-	/** Debug, raid data: sounds this many ticks after a thrall attack are logged, to see landings (yours and others'). */
-	private static final int AFTER_ATTACK_TICKS = 3;
 
-	private final Client client;
+	private static final Predicate<NPC> ANY_THRALL = npc -> true;
+	private static final Predicate<NPC> IMP = npc -> ThrallNpcs.isImp(npc.getId());
+
 	private final ThrallInOneConfig config;
 	private final ThrallTracker tracker;
-
-	/** Debug: tick of the last thrall attack sound, and whose thrall made it. */
-	private int lastAttackTick = -1;
-	private boolean lastAttackOwned;
 
 	// Read for every sound the game plays, so cached instead of going through
 	// the config proxy; written when settings change.
@@ -78,9 +73,8 @@ public class ThrallSounds
 	private volatile boolean muteSummons;
 
 	@Inject
-	ThrallSounds(Client client, ThrallInOneConfig config, ThrallTracker tracker)
+	ThrallSounds(ThrallInOneConfig config, ThrallTracker tracker)
 	{
-		this.client = client;
 		this.config = config;
 		this.tracker = tracker;
 	}
@@ -115,10 +109,8 @@ public class ThrallSounds
 	@Subscribe
 	public void onAreaSoundEffectPlayed(AreaSoundEffectPlayed event)
 	{
-		// Debug logging also reports thrall sounds the lists don't know yet.
-		boolean logging = log.isDebugEnabled();
 		MuteThralls attacks = muteAttacks;
-		if (attacks == MuteThralls.OFF && !muteSummons && !logging)
+		if (attacks == MuteThralls.OFF && !muteSummons)
 		{
 			return;
 		}
@@ -126,65 +118,43 @@ public class ThrallSounds
 		int id = event.getSoundId();
 		if (SUMMON_SOUNDS.contains(id))
 		{
-			muteSummon(id, "area", event::consume);
+			if (muteSummons)
+			{
+				event.consume();
+			}
 			return;
 		}
-		if (attacks == MuteThralls.OFF && !logging)
+		if (attacks == MuteThralls.OFF)
 		{
 			return;
 		}
 
 		int x = event.getSceneX();
 		int y = event.getSceneY();
-		NPC thrall = thrallNear(x, y, SOUND_TILES);
 		if (SHARED_ATTACK_SOUNDS.contains(id))
 		{
-			if (thrall != null)
+			NPC thrall = thrallNear(x, y, SOUND_TILES, ANY_THRALL);
+			if (thrall != null && attacks.mutes(tracker.isOwned(thrall)))
 			{
-				muteAttack(id, thrall, event.getRange(), attacks, event::consume);
-			}
-			return;
-		}
-		if (IMP_ATTACK_SOUNDS.contains(id))
-		{
-			NPC imp = thrall != null ? thrall : thrallNear(x, y, PROJECTILE_TILES);
-			if (imp != null)
-			{
-				muteAttack(id, imp, event.getRange(), attacks, event::consume);
-			}
-			else if (attacks == MuteThralls.ALL)
-			{
-				log.debug("Imp attack sound {} with no imp near: muted", id);
 				event.consume();
 			}
-			return;
 		}
-
-		if (thrall != null)
+		else if (IMP_ATTACK_SOUNDS.contains(id))
 		{
-			log.debug("Unlisted area sound {} on thrall {} ({}), range {}", id, thrall.getId(),
-				tracker.isOwned(thrall) ? "yours" : "other", event.getRange());
+			// Only an imp makes these, so a ghost standing closer isn't the one that played it.
+			NPC imp = thrallNear(x, y, PROJECTILE_TILES, IMP);
+			if (imp != null ? attacks.mutes(tracker.isOwned(imp)) : attacks == MuteThralls.ALL)
+			{
+				event.consume();
+			}
 		}
-		else if (isJustAfterAttack())
-		{
-			log.debug("Area sound {} {} tick(s) after a thrall attack ({}), range {}", id,
-				client.getTickCount() - lastAttackTick, lastAttackOwned ? "yours" : "other", event.getRange());
-		}
-	}
-
-	/** Debug: within a few ticks of a thrall attack, to see what plays when it lands. */
-	private boolean isJustAfterAttack()
-	{
-		int since = client.getTickCount() - lastAttackTick;
-		return log.isDebugEnabled() && lastAttackTick >= 0 && since >= 0 && since <= AFTER_ATTACK_TICKS;
 	}
 
 	@Subscribe
 	public void onSoundEffectPlayed(SoundEffectPlayed event)
 	{
-		boolean logging = log.isDebugEnabled();
 		MuteThralls attacks = muteAttacks;
-		if (attacks == MuteThralls.OFF && !muteSummons && !logging)
+		if (attacks == MuteThralls.OFF && !muteSummons)
 		{
 			return;
 		}
@@ -192,63 +162,28 @@ public class ThrallSounds
 		int id = event.getSoundId();
 		if (SUMMON_SOUNDS.contains(id))
 		{
-			muteSummon(id, "plain", event::consume);
-		}
-		else if (IMP_ATTACK_SOUNDS.contains(id))
-		{
-			// A plain sound is played to us alone, so the imp is ours.
-			boolean mute = attacks.mutes(true);
-			log.debug("Imp attack sound {} (plain, yours){}", id, mute ? ": muted" : "");
-			if (mute)
+			if (muteSummons)
 			{
 				event.consume();
 			}
 		}
-		else if (logging && client.getTickCount() - tracker.getLastCastTick() <= 1)
+		// A plain sound is played to us alone, so the imp is ours.
+		else if (IMP_ATTACK_SOUNDS.contains(id) && attacks.mutes(true))
 		{
-			log.debug("Unlisted sound {} on our cast tick", id);
-		}
-		else if (isJustAfterAttack())
-		{
-			log.debug("Sound {} {} tick(s) after a thrall attack ({})", id, client.getTickCount() - lastAttackTick,
-				lastAttackOwned ? "yours" : "other");
+			event.consume();
 		}
 	}
 
-	private void muteAttack(int id, NPC thrall, int range, MuteThralls attacks, Runnable consume)
-	{
-		boolean owned = tracker.isOwned(thrall);
-		lastAttackTick = client.getTickCount();
-		lastAttackOwned = owned;
-		boolean mute = attacks.mutes(owned);
-		log.debug("Thrall attack sound {} from {} ({}, range {}){}", id, thrall.getId(), owned ? "yours" : "other",
-			range, mute ? ": muted" : "");
-		if (mute)
-		{
-			consume.run();
-		}
-	}
-
-	private void muteSummon(int id, String kind, Runnable consume)
-	{
-		boolean mute = muteSummons;
-		log.debug("Thrall summon sound {} ({}){}", id, kind, mute ? ": muted" : "");
-		if (mute)
-		{
-			consume.run();
-		}
-	}
-
-	/** The thrall nearest a sound's tile, within the given tiles. */
+	/** The thrall matching the filter nearest a sound's tile, within the given tiles. */
 	@Nullable
-	private NPC thrallNear(int sceneX, int sceneY, int tiles)
+	private NPC thrallNear(int sceneX, int sceneY, int tiles, Predicate<NPC> filter)
 	{
 		NPC nearest = null;
 		int nearestDistance = Integer.MAX_VALUE;
 		for (NPC thrall : tracker.getThralls())
 		{
 			LocalPoint location = thrall.getLocalLocation();
-			if (location == null)
+			if (location == null || !filter.test(thrall))
 			{
 				continue;
 			}

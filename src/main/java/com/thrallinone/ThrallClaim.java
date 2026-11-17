@@ -63,10 +63,50 @@ final class ThrallClaim
 		boolean otherPlayerAsClose;
 		/** Ticks between the varbit turning on and this thrall appearing; negative if it appeared first. */
 		int spawnTickOffset;
+		ThrallType type;
 	}
 
 	private ThrallClaim()
 	{
+	}
+
+	/**
+	 * The type of thrall our latest cast raised, or null when it isn't known:
+	 * no cast seen since the plugin started, or the varbit turned on with no
+	 * cast of ours just before it (a missed cast graphic, which may have been
+	 * another type). Players switch type between rooms and raids, so this is
+	 * always the latest cast, never a preference.
+	 */
+	@Nullable
+	static ThrallType latestCastType(@Nullable ThrallType castType, int castTick, int varbitOnTick)
+	{
+		if (castType == null || castTick < 0)
+		{
+			return null;
+		}
+		// The varbit turns on about 5 ticks after the cast (measured).
+		if (varbitOnTick >= 0 && varbitOnTick - castTick > CAST_WINDOW_BEFORE_TICKS)
+		{
+			return null;
+		}
+		return castType;
+	}
+
+	/**
+	 * A thrall claimed without our cast graphic on its spawn tick (reacquired,
+	 * found again, judged at the varbit) must be the type our latest cast
+	 * raised, so a teammate's thrall of another type is never taken. With the
+	 * latest cast unknown, any type will do.
+	 */
+	static boolean fitsLatestCast(@Nullable ThrallType latestCast, ThrallType type)
+	{
+		return latestCast == null || latestCast == type;
+	}
+
+	/** A thrall spawning right after our cast graphic is ours if it's the type cast, beside us. */
+	static boolean fitsCastAtSpawn(@Nullable ThrallType castType, ThrallType type, int distance)
+	{
+		return castType != null && castType == type && distance <= CAST_RADIUS;
 	}
 
 	/**
@@ -93,11 +133,13 @@ final class ThrallClaim
 		return spawnTickOffset >= -CAST_WINDOW_BEFORE_TICKS && spawnTickOffset <= CAST_WINDOW_AFTER_TICKS;
 	}
 
+	/** Pick our thrall; {@code latestCast} is {@link #latestCastType}, null when unknown. */
 	@Nullable
-	static <T> Candidate<T> pick(List<Candidate<T>> candidates, Mode mode)
+	static <T> Candidate<T> pick(List<Candidate<T>> candidates, Mode mode, @Nullable ThrallType latestCast)
 	{
 		List<Candidate<T>> eligible = candidates.stream()
 			.filter(c -> !c.isInteractingWithOtherPlayer())
+			.filter(c -> fitsLatestCast(latestCast, c.getType()))
 			.collect(Collectors.toList());
 
 		Candidate<T> following = eligible.stream()

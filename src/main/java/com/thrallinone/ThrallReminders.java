@@ -26,9 +26,10 @@ import net.runelite.client.eventbus.Subscribe;
  * or don't have the Book of the Dead; those two show only in fights within
  * 10 minutes of having a thrall out. We count as fighting for the configured
  * timeout after any hitsplat on us or by us, and while we're attacking an NPC
- * with a combat level; dying ends the fight. The expiry notification fires once per expiry: when
+ * with a combat level; dying or leaving a raid ends the fight. The expiry notification fires once per expiry: when
  * the thrall runs out mid-fight, or when we next start fighting without one.
- * None of these show where a thrall can't be summoned ({@link NoSummonTracker});
+ * A thrall left behind in another instance ({@link ThrallTracker#isLeftBehind})
+ * counts as expired, though the varbit stays on. None of these show where a thrall can't be summoned ({@link NoSummonTracker});
  * an expiry notification held back there fires once we fight somewhere else.
  * These only show information; nothing is cast for you.
  */
@@ -51,13 +52,19 @@ public class ThrallReminders
 	private final Notifier notifier;
 	private final NoSummonTracker noSummon;
 
+	/** The resurrection varbit; {@link #thrallOut()} also allows for a thrall left behind. */
 	private boolean active;
+	/** The tracker's last left-behind tick already counted as an expiry. */
+	private int leftBehindSeen = -1;
 	private boolean expiryCheckPending;
 	private int lastCombatTick = -1;
 	private int expiredTick = -1;
 	private boolean expiryNotified;
 	private int lastThrallTick = -1;
 	private int diedTick = -1;
+	/** The raid we stood in last tick, or null. */
+	@Nullable
+	private String raid;
 
 	private boolean wrongSpellbook;
 	private boolean missingBook;
@@ -81,12 +88,14 @@ public class ThrallReminders
 	void reset()
 	{
 		active = client.getVarbitValue(VarbitID.ARCEUUS_RESURRECTION_ACTIVE) != 0;
+		leftBehindSeen = -1;
 		expiryCheckPending = false;
 		lastCombatTick = -1;
 		expiredTick = -1;
 		expiryNotified = false;
 		lastThrallTick = active ? client.getTickCount() : -1;
 		diedTick = -1;
+		raid = null;
 		wrongSpellbook = false;
 		missingBook = false;
 	}
@@ -101,7 +110,16 @@ public class ThrallReminders
 	{
 		return previewing(PreviewReminder.RECAST)
 			|| config.remindersEnabled() && config.recastBox() != RecastBox.OFF
-				&& expiredTick >= 0 && !active && isInCombat() && canSummonHere();
+				&& expiredTick >= 0 && !thrallOut() && isInCombat() && canSummonHere();
+	}
+
+	/**
+	 * Our thrall is out: the varbit is on and we didn't leave it behind in
+	 * another instance, where the varbit can stay on long after it's gone.
+	 */
+	private boolean thrallOut()
+	{
+		return active && !tracker.isLeftBehind();
 	}
 
 	public boolean showWrongSpellbook()
@@ -145,7 +163,7 @@ public class ThrallReminders
 	 */
 	private boolean warningApplies()
 	{
-		if (active || !canSummonHere() || !isInCombat())
+		if (thrallOut() || !canSummonHere() || !isInCombat())
 		{
 			return false;
 		}
@@ -223,12 +241,29 @@ public class ThrallReminders
 		{
 			expiryCheckPending = false;
 			boolean recast = tracker.getLastCastTick() >= 0 && tick - tracker.getLastCastTick() <= 1;
-			if (!active && !recast)
+			// Already counted as expired when it was left behind: one notification per thrall.
+			if (!active && !recast && expiredTick < 0)
 			{
 				expiredTick = tick;
 				expiryNotified = false;
 				log.debug("Thrall expired at tick {} (in combat: {}, last combat tick {}, cooldown varbit {})",
 					tick, isInCombat(), lastCombatTick, client.getVarbitValue(VarbitID.ARCEUUS_RESURRECTION_COOLDOWN));
+			}
+		}
+
+		// Left behind in another instance: as good as expired, though the varbit stays on.
+		int leftBehind = tracker.getLeftBehindTick();
+		if (leftBehind >= 0 && leftBehind != leftBehindSeen)
+		{
+			leftBehindSeen = leftBehind;
+			// Recent use for the warnings: the varbit may not change again for a long while.
+			lastThrallTick = leftBehind;
+			if (expiredTick < 0)
+			{
+				expiredTick = leftBehind;
+				expiryNotified = false;
+				log.debug("Thrall left behind at tick {}: counts as expired (in combat: {}, last combat tick {})",
+					leftBehind, isInCombat(), lastCombatTick);
 			}
 		}
 
@@ -240,6 +275,16 @@ public class ThrallReminders
 			expiredTick = -1;
 		}
 
+		// Teleporting out of a raid (or a wipe) ends the fight: a thrall left
+		// behind there would otherwise bring up the reminder outside.
+		String raidNow = BossKey.current(client);
+		if (raid != null && !raid.equals(raidNow) && lastCombatTick >= 0)
+		{
+			lastCombatTick = -1;
+			log.debug("Left {} at tick {}; no longer in combat", raid, tick);
+		}
+		raid = raidNow;
+
 		Player me = client.getLocalPlayer();
 		Actor target = me == null ? null : me.getInteracting();
 		if (target instanceof NPC && ((NPC) target).getCombatLevel() > 0 && !justDied(tick))
@@ -249,7 +294,7 @@ public class ThrallReminders
 
 		// Once per expiry, as soon as we're fighting without a thrall somewhere we could summon one.
 		// With reminders off it still counts as sent, so turning them back on mid-fight doesn't fire a stale one.
-		if (expiredTick >= 0 && !active && !expiryNotified && isInCombat() && canSummonHere())
+		if (expiredTick >= 0 && !thrallOut() && !expiryNotified && isInCombat() && canSummonHere())
 		{
 			expiryNotified = true;
 			if (config.remindersEnabled())

@@ -126,9 +126,14 @@ public class ThrallTimer
 		return client.getVarpValue(VarPlayerID.MAP_CLOCK);
 	}
 
-	/** Ticks until our thrall expires, or -1 when there is no thrall or its start was missed. */
+	/** Ticks until our thrall expires, or -1 when there is no thrall, it was left behind, or its start was missed. */
 	public int getRemainingTicks()
 	{
+		if (tracker.isLeftBehind())
+		{
+			// The varbit may stay on long after (see ThrallLoss); nothing of ours is counting down.
+			return -1;
+		}
 		int end = endTick;
 		// Claimed from our cast on the spawn tick, before the varbit (or with
 		// the varbit still on from the thrall it replaced): count from the spawn.

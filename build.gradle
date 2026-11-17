@@ -28,7 +28,7 @@ dependencies {
 }
 
 group = 'com.thrallinone'
-version = '1.2.0'
+version = '1.2.1'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
@@ -48,7 +48,13 @@ tasks.register('run', JavaExec) {
 	{
 		jvmArgs "-Dsun.java2d.uiScale=${project.uiScale}"
 	}
-	args "--developer-mode", "--debug"
+	// More JVM options, space separated: ./gradlew run "-PrunJvmArgs=-Xmx4g -da"
+	if (project.hasProperty('runJvmArgs'))
+	{
+		jvmArgs project.runJvmArgs.tokenize(' ')
+	}
+	// Client options instead of the defaults, comma separated: ./gradlew run "-PrunArgs=--developer-mode,--profile,My Profile"
+	args(project.hasProperty('runArgs') ? project.runArgs.tokenize(',') : ['--developer-mode', '--debug'])
 }
 
 tasks.register('shadowJar', Jar) {

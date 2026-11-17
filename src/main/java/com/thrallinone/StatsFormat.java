@@ -45,9 +45,11 @@ final class StatsFormat
 	}
 
 	/**
-	 * Short enough for a stat tile: in full up to 10,000 ("6,204"), then
-	 * thousands, millions or billions with one decimal, cut rather than
-	 * rounded as the game does ("214.8K", "7.3M").
+	 * Short enough for a stat tile, at most 5 characters: in full up to 10,000
+	 * ("6,204"), then thousands, millions or billions, with one decimal below
+	 * 100 ("37.2K", "7.3M") and none from 100 up ("387K", as the game shows
+	 * stacks), cut rather than rounded, so the K or M is never pushed out of
+	 * a tile.
 	 */
 	static String shortNumber(long value)
 	{
@@ -57,17 +59,24 @@ final class StatsFormat
 		}
 		if (value < 1_000_000)
 		{
-			return tenths(value / 100) + "K";
+			return scaled(value, 1_000) + "K";
 		}
 		if (value < 1_000_000_000)
 		{
-			return tenths(value / 100_000) + "M";
+			return scaled(value, 1_000_000) + "M";
 		}
-		return tenths(value / 100_000_000) + "B";
+		return scaled(value, 1_000_000_000) + "B";
 	}
 
-	private static String tenths(long tenths)
+	/** The value in units of {@code unit}: one decimal below 100, whole from 100 up. */
+	private static String scaled(long value, long unit)
 	{
+		long whole = value / unit;
+		if (whole >= 100)
+		{
+			return String.valueOf(whole);
+		}
+		long tenths = value / (unit / 10);
 		return tenths / 10 + "." + tenths % 10;
 	}
 

@@ -3,6 +3,10 @@ package com.thrallinone;
 import com.google.common.collect.ImmutableSet;
 import java.util.Set;
 import javax.annotation.Nullable;
+import net.runelite.api.Client;
+import net.runelite.api.Player;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.gameval.VarbitID;
 
 /**
  * Raid fights are filed under the raid rather than the NPC: a raid room has
@@ -43,6 +47,22 @@ final class BossKey
 	static boolean isRaid(String boss)
 	{
 		return RAIDS.contains(boss);
+	}
+
+	/** The raid we are standing in, or null. Client thread. */
+	@Nullable
+	static String current(Client client)
+	{
+		boolean inChambers = client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) == 1;
+		return raid(inChambers, templateRegion(client));
+	}
+
+	/** The region we stand in, as the map has it outside instances; -1 if unknown. Client thread. */
+	static int templateRegion(Client client)
+	{
+		Player me = client.getLocalPlayer();
+		WorldPoint location = me == null ? null : WorldPoint.fromLocalInstance(client, me.getLocalLocation());
+		return location == null ? -1 : location.getRegionID();
 	}
 
 	/** The raid we are in, from the Chambers of Xeric varbit and the template region, or null. */

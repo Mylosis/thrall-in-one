@@ -9,12 +9,14 @@ import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
+import javax.inject.Provider;
 import javax.inject.Singleton;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
 import net.runelite.api.ActorSpotAnim;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.NPC;
 import net.runelite.api.Player;
 import net.runelite.api.WorldView;
@@ -45,6 +47,12 @@ import net.runelite.client.eventbus.Subscribe;
  * scene's NPC list. That last check runs every tick so a stale reference can
  * never keep an outline on screen after a teleport or a death (the
  * lingering-outline bug other thrall plugins have).
+ *
+ * <p>Losing the claimed thrall with the varbit still on is judged by
+ * {@link ThrallLoss}: one left behind in another instance stops counting as
+ * out after a short grace (the varbit can stay on long after it), and one
+ * that ran out is not replaced by a teammate's. Any claim made without our
+ * cast graphic on the spawn tick only takes the type our latest cast raised.
  */
 @Slf4j
 @Singleton
@@ -65,11 +73,17 @@ public class ThrallTracker
 	static final int SAME_CAST_TICKS = 10;
 
 	private final Client client;
+	/** For the time left when our thrall is lost (the timer depends on this class, hence the provider). */
+	private final Provider<ThrallTimer> timer;
 
 	/** Every thrall in the scene, with when and where it appeared. */
 	private final Map<NPC, Sighting> thralls = new IdentityHashMap<>();
 	/** Thralls we have seen interact with another player: never ours. */
 	private final Set<NPC> rejected = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Thralls already logged as not claimed for being another type than our latest cast. */
+	private final Set<NPC> wrongTypeLogged = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Why our thrall went away with the varbit still on, and whether it's left behind. */
+	private final ThrallLoss loss = new ThrallLoss();
 
 	@Getter
 	@Nullable
@@ -79,6 +93,10 @@ public class ThrallTracker
 	private String claimReason = "";
 
 	private boolean active;
+	/** Tick the varbit last turned on, or -1; kept after a claim, unlike {@link #castTick}. */
+	private int varbitOnTick = -1;
+	/** Tick the scene last started loading, or -1. */
+	private int loadTick = -1;
 	private int castTick = -1;
 	/** Tick our player last showed a Resurrect cast graphic, and the thrall type it raises. */
 	private int myCastTick = -1;
@@ -110,9 +128,10 @@ public class ThrallTracker
 	private WorldPoint locationBeforeLoad;
 
 	@Inject
-	ThrallTracker(Client client)
+	ThrallTracker(Client client, Provider<ThrallTimer> timer)
 	{
 		this.client = client;
+		this.timer = timer;
 	}
 
 	void start()
@@ -133,8 +152,12 @@ public class ThrallTracker
 	{
 		thralls.clear();
 		rejected.clear();
+		wrongTypeLogged.clear();
 		release("reset");
+		loss.reset();
 		active = false;
+		varbitOnTick = -1;
+		loadTick = -1;
 		castTick = -1;
 		myCastTick = -1;
 		myCastType = null;
@@ -159,9 +182,43 @@ public class ThrallTracker
 		return npc != null && npc == owned;
 	}
 
+	/**
+	 * Our thrall is out as far as the game's varbit says, unless we left it
+	 * behind in another instance (the varbit can stay on long after that).
+	 */
 	public boolean hasActiveThrall()
 	{
+		return active && !loss.isLeftBehind();
+	}
+
+	/** The resurrection varbit as the game has it, left behind or not. */
+	public boolean isVarbitOn()
+	{
 		return active;
+	}
+
+	/** Our thrall stayed in a scene we left and none of ours came back: it doesn't count as out. */
+	public boolean isLeftBehind()
+	{
+		return loss.isLeftBehind();
+	}
+
+	/** Tick our thrall began to count as left behind, or -1. */
+	public int getLeftBehindTick()
+	{
+		return loss.getLeftBehindTick();
+	}
+
+	/** Why our thrall last went away with the varbit on, until we have one again. */
+	public ThrallLoss.Kind getLossKind()
+	{
+		return loss.getKind();
+	}
+
+	/** Tick our thrall last went away with the varbit on, or -1 (as {@link #getLossKind}). */
+	public int getLostTick()
+	{
+		return loss.getLostTick();
 	}
 
 	/** Spawn tick of our thrall if it was claimed from our cast (so its start is known), or -1. */
@@ -236,12 +293,12 @@ public class ThrallTracker
 	 */
 	private boolean claimFromCast(NPC npc, Player me)
 	{
-		if (npc == owned || ThrallType.of(npc.getId()) != myCastType)
+		if (npc == owned)
 		{
 			return false;
 		}
 		int distance = distanceFromUs(me, npc.getWorldLocation());
-		if (distance > ThrallClaim.CAST_RADIUS)
+		if (!ThrallClaim.fitsCastAtSpawn(myCastType, ThrallType.of(npc.getId()), distance))
 		{
 			return false;
 		}
@@ -387,10 +444,13 @@ public class ThrallTracker
 		}
 		active = nowActive;
 		stranded = false;
+		// Whatever we lost, the varbit now speaks for the thrall out (or none).
+		loss.reset();
 
 		if (active)
 		{
 			castTick = client.getTickCount();
+			varbitOnTick = castTick;
 			if (owned != null && provisionalUntilTick >= 0)
 			{
 				provisionalUntilTick = -1;
@@ -425,6 +485,8 @@ public class ThrallTracker
 				// NPC instances may not survive the reload; check them all on the next tick.
 				locationBeforeLoad = lastPlayerLocation;
 				rescanPending = true;
+				loadTick = client.getTickCount();
+				loss.sceneChanged(loadTick);
 				break;
 			case LOGIN_SCREEN:
 			case HOPPING:
@@ -471,9 +533,10 @@ public class ThrallTracker
 		// drop anything the scene no longer holds rather than outline a ghost.
 		thralls.keySet().removeIf(npc -> !isInScene(npc));
 		rejected.retainAll(thralls.keySet());
+		wrongTypeLogged.retainAll(thralls.keySet());
 		if (owned != null && !thralls.containsKey(owned))
 		{
-			lose("no longer in scene");
+			lose("no longer in scene", teleported || isSceneChanging());
 		}
 
 		if (owned != null && provisionalUntilTick >= 0 && client.getTickCount() > provisionalUntilTick)
@@ -483,8 +546,23 @@ public class ThrallTracker
 			release("varbit never confirmed");
 		}
 
+		if (loss.tick(client.getTickCount()))
+		{
+			// lostIndex stays: should it turn up after all (slow to catch up), it's
+			// claimed again ("same thrall again", type checked) and counts as out.
+			log.debug("Thrall left behind at tick {}: lost at tick {} on a scene change and none of ours came back; "
+				+ "not out from now, though the varbit is still on", client.getTickCount(), loss.getLostTick());
+		}
+
 		correctClaim(me);
 		tryClaim();
+	}
+
+	/** The scene is loading or just loaded, or we teleported away from our thrall. */
+	private boolean isSceneChanging()
+	{
+		return client.getGameState() == GameState.LOADING || stranded
+			|| loadTick >= 0 && client.getTickCount() - loadTick <= 1;
 	}
 
 	/** Rebuild the thrall list from the scene and drop anything that is gone. */
@@ -506,9 +584,10 @@ public class ThrallTracker
 			}
 		}
 		rejected.retainAll(thralls.keySet());
+		wrongTypeLogged.retainAll(thralls.keySet());
 		if (owned != null && !thralls.containsKey(owned))
 		{
-			lose("gone after scene load");
+			lose("gone after scene load", true);
 		}
 	}
 
@@ -535,9 +614,11 @@ public class ThrallTracker
 
 		if (target != me)
 		{
+			ThrallType latestCast = latestCastType();
 			for (NPC npc : thralls.keySet())
 			{
-				if (npc != owned && npc.getInteracting() == me && !rejected.contains(npc))
+				if (npc != owned && npc.getInteracting() == me && !rejected.contains(npc)
+					&& ThrallClaim.fitsLatestCast(latestCast, ThrallType.of(npc.getId())))
 				{
 					claim(npc, "interacts with us (switched)");
 					return;
@@ -548,7 +629,9 @@ public class ThrallTracker
 
 	private void tryClaim()
 	{
-		if (!active || owned != null || thralls.isEmpty())
+		// Our thrall ran out (the varbit clears a tick later): a teammate's
+		// beside us isn't its replacement. Only our next cast claims again.
+		if (!active || owned != null || thralls.isEmpty() || loss.isExpired())
 		{
 			return;
 		}
@@ -559,6 +642,7 @@ public class ThrallTracker
 			return;
 		}
 
+		ThrallType latestCast = latestCastType();
 		// The game keeps a thrall's NPC index for as long as it exists, so the
 		// one we lost to a scene reload comes back under the same index, even
 		// if it is far away by then.
@@ -566,7 +650,8 @@ public class ThrallTracker
 		{
 			for (NPC npc : thralls.keySet())
 			{
-				if (npc.getIndex() == lostIndex && !rejected.contains(npc))
+				if (npc.getIndex() == lostIndex && !rejected.contains(npc)
+					&& ThrallClaim.fitsLatestCast(latestCast, ThrallType.of(npc.getId())))
 				{
 					claim(npc, "same thrall again");
 					return;
@@ -580,7 +665,7 @@ public class ThrallTracker
 		{
 			mode = ThrallClaim.Mode.FRESH_CAST;
 		}
-		else if (stranded)
+		else if (stranded || loss.isLeftBehind())
 		{
 			mode = ThrallClaim.Mode.INTERACTING_ONLY;
 		}
@@ -623,18 +708,39 @@ public class ThrallTracker
 				target == me,
 				target instanceof Player && target != me,
 				otherPlayerAsClose,
-				spawnOffset));
+				spawnOffset,
+				ThrallType.of(npc.getId())));
 		}
 
-		ThrallClaim.Candidate<NPC> pick = ThrallClaim.pick(candidates, mode);
+		ThrallClaim.Candidate<NPC> pick = ThrallClaim.pick(candidates, mode, latestCast);
 		if (pick != null)
 		{
 			claim(pick.getThrall(), pick.isInteractingWithMe() ? "interacts with us" : mode.name().toLowerCase().replace('_', ' '));
+			return;
 		}
-		else if (mode == ThrallClaim.Mode.FRESH_CAST && log.isDebugEnabled())
+		if (!log.isDebugEnabled())
+		{
+			return;
+		}
+		if (mode == ThrallClaim.Mode.FRESH_CAST)
 		{
 			log.debug("Tick {} (cast {}): no thrall claimed from {}", tick, castTick, candidates);
 		}
+		// Once per thrall: one we would have taken but for its type.
+		ThrallClaim.Candidate<NPC> anyType = latestCast == null ? null : ThrallClaim.pick(candidates, mode, null);
+		if (anyType != null && wrongTypeLogged.add(anyType.getThrall()))
+		{
+			log.debug("Not claiming thrall id={} index={} ({}, {} tiles): {}, our latest cast was {}",
+				anyType.getThrall().getId(), anyType.getThrall().getIndex(), mode.name().toLowerCase().replace('_', ' '),
+				anyType.getDistance(), anyType.getType(), latestCast);
+		}
+	}
+
+	/** The type of thrall our latest cast raised, or null if unknown ({@link ThrallClaim#latestCastType}). */
+	@Nullable
+	private ThrallType latestCastType()
+	{
+		return ThrallClaim.latestCastType(myCastType, myCastTick, varbitOnTick);
 	}
 
 	/** When and where a thrall appeared, read the moment we first see it. */
@@ -691,6 +797,13 @@ public class ThrallTracker
 		stranded = false;
 		provisionalUntilTick = -1;
 		lostIndex = -1;
+		if (loss.getKind() != ThrallLoss.Kind.NONE)
+		{
+			log.debug("Thrall lost at tick {} ({}) replaced after {} ticks{}", loss.getLostTick(),
+				loss.getKind().name().toLowerCase().replace('_', ' '), client.getTickCount() - loss.getLostTick(),
+				loss.isLeftBehind() ? ", after it counted as left behind" : "");
+		}
+		loss.reset();
 		log.debug("Claimed thrall id={} index={} ({})", npc.getId(), npc.getIndex(), reason);
 	}
 
@@ -706,12 +819,21 @@ public class ThrallTracker
 		provisionalUntilTick = -1;
 	}
 
-	/** Our thrall's NPC went out of view while it may still be out: remember it so it can be picked up again. */
-	private void lose(String reason)
+	/**
+	 * Our thrall's NPC went away while it may still be out. Judge why
+	 * ({@link ThrallLoss}): unless it ran out, remember it so it can be picked
+	 * up again.
+	 */
+	private void lose(String reason, boolean sceneChange)
 	{
 		if (owned != null && active)
 		{
-			lostIndex = owned.getIndex();
+			// Before the release, while the timer still knows this thrall's start.
+			int remaining = timer.get().getRemainingTicks();
+			ThrallLoss.Kind kind = loss.lost(client.getTickCount(), sceneChange, remaining);
+			lostIndex = kind == ThrallLoss.Kind.EXPIRY ? -1 : owned.getIndex();
+			log.debug("Lost our thrall id={} index={} at tick {} with {} ticks left: {}", owned.getId(), owned.getIndex(),
+				client.getTickCount(), remaining, kind.name().toLowerCase().replace('_', ' '));
 		}
 		release(reason);
 	}
@@ -723,9 +845,10 @@ public class ThrallTracker
 			return;
 		}
 		rejected.remove(npc);
+		wrongTypeLogged.remove(npc);
 		if (npc == owned)
 		{
-			lose("despawned");
+			lose("despawned", isSceneChanging());
 		}
 	}
 

@@ -9,13 +9,10 @@ import net.runelite.api.Actor;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.NPC;
-import net.runelite.api.Player;
-import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
-import net.runelite.api.gameval.VarbitID;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.RuneScapeProfileChanged;
 
@@ -27,8 +24,8 @@ import net.runelite.client.events.RuneScapeProfileChanged;
  *
  * <p>A fight starts with our first hitsplat on an NPC (ours or our thrall's)
  * and ends when the NPC we hit most dies and nothing else is hit for a few
- * ticks, when we die, or when nothing has been hit for the "Fight ends after"
- * time, which the reminders use too. Fights are only saved while we use
+ * ticks, when we die, when we leave the raid it started in, or when nothing
+ * has been hit for the "Fight ends after" time, which the reminders use too. Fights are only saved while we use
  * thralls: our thrall was out during the fight, or in the 10 minutes before
  * it, so a fight where we forgot to cast still counts against uptime. A fight
  * that starts where thralls can't be summoned (Nightmare Zone, a boat, a
@@ -162,15 +159,17 @@ public class ThrallFights
 		return name != null && !name.isEmpty() && !"null".equals(name);
 	}
 
-	/** One of our hitsplats that {@link ThrallDamage} matched to our thrall's attack. */
-	void onThrallHit(int damage, int tick)
+	/**
+	 * One of our hitsplats that {@link ThrallDamage} matched to our thrall's attack,
+	 * with the type of the thrall that attacked (it may have run out since).
+	 */
+	void onThrallHit(int damage, int tick, @Nullable ThrallType type)
 	{
 		if (justDied(tick))
 		{
 			return;
 		}
-		NPC owned = tracker.getOwned();
-		fightAt(tick).thrallHit(tick, owned == null ? null : ThrallType.of(owned.getId()), damage);
+		fightAt(tick).thrallHit(tick, type, damage);
 	}
 
 	/** Hits still landing just after we died belong to the fight that ended with the death. */
@@ -185,29 +184,14 @@ public class ThrallFights
 		if (current == null)
 		{
 			current = new Fight(tick);
-			current.setRaid(currentRaid());
+			current.setRaid(BossKey.current(client));
 			boolean recentThrall = lastThrallOutTick >= 0 && tick >= lastThrallOutTick && tick - lastThrallOutTick <= RECENT_THRALL_TICKS;
 			// Where no thrall can be summoned, not having one out isn't a lapse.
 			thrallOutBeforeFight = thrallOut() || recentThrall && !noSummon.isNoSummonHere();
 			targetDiedTick = -1;
-			log.debug("Fight started at tick {} (raid {}, template region {})", tick, current.getRaid(), templateRegion());
+			log.debug("Fight started at tick {} (raid {}, template region {})", tick, current.getRaid(), BossKey.templateRegion(client));
 		}
 		return current;
-	}
-
-	@Nullable
-	private String currentRaid()
-	{
-		boolean inChambers = client.getVarbitValue(VarbitID.RAIDS_CLIENT_INDUNGEON) == 1;
-		return BossKey.raid(inChambers, templateRegion());
-	}
-
-	/** The region we stand in, as the map has it outside instances; -1 if unknown. */
-	private int templateRegion()
-	{
-		Player me = client.getLocalPlayer();
-		WorldPoint location = me == null ? null : WorldPoint.fromLocalInstance(client, me.getLocalLocation());
-		return location == null ? -1 : location.getRegionID();
 	}
 
 	@Subscribe
@@ -248,6 +232,12 @@ public class ThrallFights
 			recordsChanged = true;
 		}
 
+		if (current != null && leftRaid())
+		{
+			// Teleported out or wiped: the ticks outside the raid aren't part of the fight.
+			log.debug("Left {} at tick {}; fight over", current.getRaid(), tick);
+			finish();
+		}
 		if (current != null)
 		{
 			current.tick(tick, thrallOut, ownedTier());
@@ -258,6 +248,13 @@ public class ThrallFights
 		}
 
 		pushToPanel();
+	}
+
+	/** The fight started in a raid and we're no longer in it. */
+	private boolean leftRaid()
+	{
+		String raid = current.getRaid();
+		return raid != null && !raid.equals(BossKey.current(client));
 	}
 
 	private boolean fightOver(int tick)

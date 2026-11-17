@@ -494,6 +494,7 @@ class ThrallPanel extends PluginPanel
 		private final JLabel icon = new JLabel();
 		private final JLabel value = new JLabel();
 		private final JLabel label = new JLabel();
+		private final Font valueFont;
 
 		Tile(Color background, boolean centered)
 		{
@@ -501,7 +502,8 @@ class ThrallPanel extends PluginPanel
 			setBackground(background);
 			setBorder(centered ? new EmptyBorder(8, 3, 7, 3) : new EmptyBorder(7, 7, 6, 4));
 			float x = centered ? CENTER_ALIGNMENT : LEFT_ALIGNMENT;
-			value.setFont(centered ? TRIO_VALUE_FONT : TILE_VALUE_FONT);
+			valueFont = centered ? TRIO_VALUE_FONT : TILE_VALUE_FONT;
+			value.setFont(valueFont);
 			value.setForeground(Color.WHITE);
 			label.setFont(FontManager.getRunescapeFont());
 			label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
@@ -533,6 +535,28 @@ class ThrallPanel extends PluginPanel
 			icon.setIcon(ThrallPanel.icon(image, TRIO_ICON_SIZE));
 			revalidate();
 			repaint();
+		}
+
+		/**
+		 * A top tile's value drops to the other tiles' size when it doesn't fit:
+		 * a third of the panel is about 61 px with the scrollbar showing, and
+		 * "387.9K" in the big font is 69 px, which Swing cut to "387....".
+		 */
+		@Override
+		public void doLayout()
+		{
+			Insets insets = getInsets();
+			int room = getWidth() - insets.left - insets.right;
+			if (room > 0 && valueFont != TILE_VALUE_FONT)
+			{
+				boolean fits = getFontMetrics(valueFont).stringWidth(value.getText()) <= room;
+				Font font = fits ? valueFont : TILE_VALUE_FONT;
+				if (value.getFont() != font)
+				{
+					value.setFont(font);
+				}
+			}
+			super.doLayout();
 		}
 	}
 

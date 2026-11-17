@@ -107,7 +107,7 @@ public class ThrallDamage
 		int ticksToLand = (projectile.getRemainingCycles() + CYCLES_PER_TICK - 1) / CYCLES_PER_TICK;
 		log.debug("Thrall projectile {} at {} from tick {}, lands about tick {}",
 			projectile.getId(), nameOf(target), tick, tick + ticksToLand);
-		expect(target, tick, tick + ticksToLand + 1);
+		expect(target, ThrallType.of(thrall.getId()), tick, tick + ticksToLand + 1);
 	}
 
 	/**
@@ -166,7 +166,7 @@ public class ThrallDamage
 		Actor target = targetOf(thrall, null);
 		log.debug("Thrall attack animation {} at {} on tick {}", thrall.getAnimation(), nameOf(target), tick);
 		// Never the same tick: a hitsplat arriving with the animation is our own hit.
-		expect(target, tick + 1, tick + 2);
+		expect(target, ThrallType.MELEE, tick + 1, tick + 2);
 	}
 
 	@Subscribe
@@ -191,7 +191,7 @@ public class ThrallDamage
 			if ((hit.target == null || hit.target == target) && tick >= hit.fromTick && tick <= hit.toTick)
 			{
 				it.remove();
-				record(hitsplat.getAmount(), target, tick);
+				record(hitsplat.getAmount(), target, tick, hit.type);
 				return;
 			}
 		}
@@ -204,8 +204,11 @@ public class ThrallDamage
 		}
 	}
 
-	/** Note an attack by our thrall, or count it straight away if its hitsplat already arrived this tick. */
-	private void expect(@Nullable Actor target, int fromTick, int toTick)
+	/**
+	 * Note an attack by our thrall, or count it straight away if its hitsplat already arrived this tick.
+	 * The thrall's type is taken now: it may run out before the hit lands.
+	 */
+	private void expect(@Nullable Actor target, @Nullable ThrallType type, int fromTick, int toTick)
 	{
 		for (Iterator<SeenHitsplat> it = unclaimed.iterator(); it.hasNext(); )
 		{
@@ -213,11 +216,11 @@ public class ThrallDamage
 			if ((target == null || seen.target == target) && seen.tick >= fromTick)
 			{
 				it.remove();
-				record(seen.amount, seen.target, seen.tick);
+				record(seen.amount, seen.target, seen.tick, type);
 				return;
 			}
 		}
-		expected.add(new ExpectedHit(target, fromTick, toTick));
+		expected.add(new ExpectedHit(target, type, fromTick, toTick));
 	}
 
 	@Subscribe
@@ -259,21 +262,24 @@ public class ThrallDamage
 		}
 	}
 
-	private void record(int damage, Actor target, int tick)
+	private void record(int damage, Actor target, int tick, @Nullable ThrallType type)
 	{
 		log.debug("Thrall hit {} on {} at tick {}", damage, target.getName(), tick);
-		fights.onThrallHit(damage, tick);
+		fights.onThrallHit(damage, tick, type);
 	}
 
 	private static final class ExpectedHit
 	{
 		final Actor target;
+		@Nullable
+		final ThrallType type;
 		final int fromTick;
 		final int toTick;
 
-		ExpectedHit(Actor target, int fromTick, int toTick)
+		ExpectedHit(Actor target, @Nullable ThrallType type, int fromTick, int toTick)
 		{
 			this.target = target;
+			this.type = type;
 			this.fromTick = fromTick;
 			this.toTick = toTick;
 		}
