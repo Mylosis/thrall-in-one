@@ -1,8 +1,10 @@
 package com.thrallinone;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -60,5 +62,18 @@ public final class CastsCounter
 			}
 		}
 		return (int) casts;
+	}
+
+	/**
+	 * The casts possible after putting on any staff or tome from the
+	 * inventory. The warnings go by this, not by {@link #castsLeft}: with the
+	 * fire staff in the inventory the count is 0, but that is "put it on",
+	 * not "low on runes".
+	 */
+	public static int castsWithCarried(ThrallTier tier, Map<Integer, Integer> carried, Collection<Integer> worn)
+	{
+		List<Integer> wearable = new ArrayList<>(worn);
+		wearable.addAll(carried.keySet());
+		return castsLeft(tier, carried, wearable);
 	}
 }

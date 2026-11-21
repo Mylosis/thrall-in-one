@@ -42,6 +42,17 @@ class ThrallSummons
 	@Nullable
 	private NPC ownedLastTick;
 	private Map<Integer, Integer> runesLastTick = Collections.emptyMap();
+	/**
+	 * The inventory and rune pouch as last read ({@link RuneCounts#read}),
+	 * reused until either changes: reading them builds a map, and most ticks
+	 * nothing changed. Never modified once read. Null: read on the next tick.
+	 */
+	@Nullable
+	private Map<Integer, Integer> runesNow;
+	/** The inventory changed since {@link #runesNow} was read. */
+	private boolean inventoryChanged = true;
+	/** The rune pouch's raw slots when {@link #runesNow} was read. */
+	private final int[] pouchSeen = new int[RunePouch.RAW_SIZE];
 
 	@Inject
 	ThrallSummons(Client client, ThrallTracker tracker, ThrallStatsStore store, ItemManager itemManager)
@@ -59,11 +70,19 @@ class ThrallSummons
 		pending = null;
 		ownedLastTick = tracker.getOwned();
 		runesLastTick = Collections.emptyMap();
+		runesNow = null;
+	}
+
+	/** The inventory changed: read the runes afresh on the next tick. Client thread. */
+	void inventoryChanged()
+	{
+		inventoryChanged = true;
 	}
 
 	/** Logged out or hopped: the tick count can start again after this. */
 	void loggedOut(boolean newSession)
 	{
+		runesNow = null;
 		pending = null;
 		lastSeenCastTick = -1;
 		if (newSession)
@@ -79,12 +98,30 @@ class ThrallSummons
 	 */
 	Change tick(int tick)
 	{
-		Map<Integer, Integer> runes = RuneCounts.read(client);
+		Map<Integer, Integer> runes = currentRunes();
 		boolean cast = noteCast(tick);
 		boolean summoned = resolveSummon(tick, runes);
 		runesLastTick = runes;
 		ownedLastTick = tracker.getOwned();
 		return summoned ? Change.SUMMON : cast ? Change.CAST : Change.NONE;
+	}
+
+	/**
+	 * What {@link RuneCounts#read} would return now: read again only when the
+	 * inventory changed (an event) or the pouch's slots did (compared here, a
+	 * few varbit reads), otherwise the last read, which is the same.
+	 */
+	private Map<Integer, Integer> currentRunes()
+	{
+		boolean pouchChanged = RunePouch.readRaw(client, pouchSeen);
+		Map<Integer, Integer> runes = runesNow;
+		if (runes == null || inventoryChanged || pouchChanged)
+		{
+			inventoryChanged = false;
+			runes = RuneCounts.read(client);
+			runesNow = runes;
+		}
+		return runes;
 	}
 
 	enum Change

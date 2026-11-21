@@ -27,6 +27,9 @@ class ThrallTimerOverlay extends Overlay
 	// Derived once per size change, not every frame.
 	private Font font;
 	private int fontSize;
+	/** The text for {@link #textTicks} ticks left. */
+	private String text = "";
+	private int textTicks = -1;
 
 	@Inject
 	ThrallTimerOverlay(ThrallTracker tracker, ThrallTimer timer, ThrallInOneConfig config)
@@ -52,7 +55,13 @@ class ThrallTimerOverlay extends Overlay
 			return null;
 		}
 
-		String text = ThrallTimer.format(remaining);
+		// The text changes at most once a tick; built then, not every frame.
+		if (remaining != textTicks)
+		{
+			text = ThrallTimer.format(remaining);
+			textTicks = remaining;
+		}
+		String text = this.text;
 		int size = config.timerFontSize();
 		// Set before placing the text, which centers it with the current font.
 		graphics.setFont(font(size));

@@ -8,10 +8,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 enum PreviewReminder
 {
-	RECAST("Recast", "the Recast Thrall box, and send the expiry notification"),
+	RECAST("Recast", "the Recast Thrall box, and send Notify Me, Recast Flash and Recast Sound"),
 	SPELLBOOK("Spellbook", "the Not on the Arceuus Spellbook warning"),
 	BOOK("Book", "the No Book of the Dead warning"),
-	ALL("All", "every reminder, and send the expiry notification");
+	RUNES("Runes", "the No Thrall Runes warning"),
+	ALL("All", "every reminder, and send Notify Me, Recast Flash and Recast Sound");
 
 	/** Button text. */
 	private final String name;

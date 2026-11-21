@@ -30,8 +30,8 @@ import net.runelite.client.util.ImageUtil;
 @Slf4j
 @PluginDescriptor(
 	name = "Thrall In One",
-	description = "Tells your own Arceuus thrall apart from everyone else's: outline yours, hide or tone down theirs",
-	tags = {"thrall", "arceuus", "necromancy", "resurrect", "outline", "highlight", "hide"}
+	description = "Outline your thrall, hide everyone else's, and get told when to recast",
+	tags = {"tio", "thrall", "arceuus", "necromancy", "resurrect", "outline", "highlight", "hide"}
 )
 public class ThrallInOnePlugin extends Plugin implements RenderCallback
 {
@@ -83,7 +83,16 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 	private ThrallReminderOverlay reminderOverlay;
 
 	@Inject
+	private ReminderFlashOverlay flashOverlay;
+
+	@Inject
 	private NoSummonTracker noSummon;
+
+	@Inject
+	private TfaHelper tfaHelper;
+
+	@Inject
+	private RecastGuard recastGuard;
 
 	@Inject
 	private ThrallCasts casts;
@@ -104,8 +113,11 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 	@Inject
 	private Provider<ThrallPanel> panelProvider;
 
+	@Inject
+	private UpdateNotifier updateNotifier;
+
 	/** The sidebar button: its own 16 x 16 drawing of icon.png, filled to the edges so it reads at that size. */
-	private static final BufferedImage NAV_ICON = ImageUtil.loadImageResource(ThrallInOnePlugin.class, "sidebar_icon.png");
+	static final BufferedImage NAV_ICON = ImageUtil.loadImageResource(ThrallInOnePlugin.class, "sidebar_icon.png");
 
 	private ThrallPanel panel;
 	private NavigationButton navButton;
@@ -114,16 +126,24 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 	// through the config proxy; written on the Swing thread when settings change.
 	private volatile boolean hideOthers;
 	private volatile boolean hideOwn;
+	/** Registered as a render callback ({@link #setRenderHook}). */
+	private boolean renderHooked;
+	/** Between start-up and shut-down, so a late settings change can't hook rendering back in. */
+	private volatile boolean running;
 
 	@Override
 	protected void startUp()
 	{
+		// First, so everything below (and the sidebar panel's folded boxes) reads the moved settings.
+		SettingsMigration.run(configManager, config);
 		cacheConfig();
 		eventBus.register(tracker);
 		eventBus.register(timer);
 		eventBus.register(damage);
 		eventBus.register(reminders);
 		eventBus.register(noSummon);
+		eventBus.register(tfaHelper);
+		eventBus.register(recastGuard);
 		eventBus.register(casts);
 		eventBus.register(projectiles);
 		sounds.reset();
@@ -135,17 +155,23 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 			damage.reset();
 			reminders.reset();
 			noSummon.reset();
+			tfaHelper.reset();
 			casts.reset();
 			projectiles.reset();
 		});
-		renderCallbackManager.register(this);
+		running = true;
+		setRenderHook(hideOwn || hideOthers);
 		overlayManager.add(outlineOverlay);
 		overlayManager.add(timerOverlay);
 		overlayManager.add(reminderOverlay);
+		overlayManager.add(flashOverlay);
 		if (developerMode)
 		{
 			overlayManager.add(debugOverlay);
 		}
+		// Before the panel exists, so it opens with the right notes.
+		updateNotifier.start();
+		eventBus.register(updateNotifier);
 		startFightStats();
 	}
 
@@ -216,20 +242,26 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 		overlayManager.remove(outlineOverlay);
 		overlayManager.remove(timerOverlay);
 		overlayManager.remove(reminderOverlay);
+		overlayManager.remove(flashOverlay);
 		overlayManager.remove(debugOverlay);
-		renderCallbackManager.unregister(this);
+		running = false;
+		setRenderHook(false);
 		eventBus.unregister(tracker);
 		eventBus.unregister(timer);
 		eventBus.unregister(damage);
 		eventBus.unregister(reminders);
 		eventBus.unregister(noSummon);
+		eventBus.unregister(tfaHelper);
+		eventBus.unregister(recastGuard);
 		eventBus.unregister(casts);
 		eventBus.unregister(projectiles);
 		eventBus.unregister(sounds);
+		eventBus.unregister(updateNotifier);
 		clientThread.invoke(() ->
 		{
 			tracker.stop();
 			projectiles.reset();
+			recastGuard.reset();
 		});
 	}
 
@@ -239,9 +271,14 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 		if (ThrallInOneConfig.GROUP.equals(event.getGroup()))
 		{
 			cacheConfig();
+			updateRenderHook();
 			if ("sidebarPanel".equals(event.getKey()))
 			{
 				SwingUtilities.invokeLater(this::updateSidebar);
+			}
+			else if ("showUpdateNotes".equals(event.getKey()))
+			{
+				SwingUtilities.invokeLater(this::updateNotes);
 			}
 		}
 	}
@@ -253,18 +290,81 @@ public class ThrallInOnePlugin extends Plugin implements RenderCallback
 		{
 			configManager.setConfiguration(ThrallInOneConfig.GROUP, "debugLabels", !config.debugLabels());
 		}
+		// Shows the newest update notes again, as the panel's Update Notes button does.
+		else if (developerMode && "thrallnotes".equalsIgnoreCase(event.getCommand()))
+		{
+			updateNotifier.showLatestForTesting();
+			SwingUtilities.invokeLater(this::updateNotes);
+		}
 	}
 
 	@Subscribe
 	public void onProfileChanged(ProfileChanged event)
 	{
+		SettingsMigration.run(configManager, config);
 		cacheConfig();
+		updateRenderHook();
+		updateNotifier.start();
+		SwingUtilities.invokeLater(() ->
+		{
+			// After the migration, which may have folded the casts box on this profile.
+			if (panel != null)
+			{
+				panel.reloadFolded();
+			}
+			updateNotes();
+		});
+	}
+
+	/** Swing thread. */
+	private void updateNotes()
+	{
+		if (panel != null)
+		{
+			panel.updateNotes();
+		}
 	}
 
 	private void cacheConfig()
 	{
 		hideOthers = !config.othersShow().isModel();
 		hideOwn = !config.ownShow().isModel();
+	}
+
+	/**
+	 * After a settings change: hook into rendering, or out of it, to match.
+	 * Done on the client thread, which also draws, so it never lands
+	 * mid-frame, and it reads the settings as they are by then.
+	 */
+	private void updateRenderHook()
+	{
+		clientThread.invoke(() ->
+		{
+			if (running)
+			{
+				setRenderHook(hideOwn || hideOthers);
+			}
+		});
+	}
+
+	/**
+	 * Hook into rendering only while a thrall can be hidden: with both shown
+	 * as models, {@link #addEntity} would keep everything, so it isn't asked.
+	 */
+	private synchronized void setRenderHook(boolean on)
+	{
+		if (on != renderHooked)
+		{
+			renderHooked = on;
+			if (on)
+			{
+				renderCallbackManager.register(this);
+			}
+			else
+			{
+				renderCallbackManager.unregister(this);
+			}
+		}
 	}
 
 	@Override

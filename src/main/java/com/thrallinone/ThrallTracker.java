@@ -177,6 +177,12 @@ public class ThrallTracker
 		return Collections.unmodifiableSet(thralls.keySet());
 	}
 
+	/** This NPC is one of the thralls in the list. Client thread. */
+	boolean isListed(NPC npc)
+	{
+		return thralls.containsKey(npc);
+	}
+
 	public boolean isOwned(NPC npc)
 	{
 		return npc != null && npc == owned;

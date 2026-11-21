@@ -32,8 +32,33 @@ final class RunePouch
 		VarbitID.RUNE_POUCH_QUANTITY_4, VarbitID.RUNE_POUCH_QUANTITY_5, VarbitID.RUNE_POUCH_QUANTITY_6,
 	};
 
+	/** Size of the array {@link #readRaw} fills: each slot's rune type, then its quantity. */
+	static final int RAW_SIZE = TYPES.length * 2;
+
 	private RunePouch()
 	{
+	}
+
+	/**
+	 * Read every slot's raw rune type and quantity into {@code raw} (of
+	 * {@link #RAW_SIZE}), the only state {@link #addContents} depends on.
+	 * Returns whether any value differed from what {@code raw} held.
+	 */
+	static boolean readRaw(Client client, int[] raw)
+	{
+		boolean changed = false;
+		for (int i = 0; i < TYPES.length; i++)
+		{
+			int type = client.getVarbitValue(TYPES[i]);
+			int quantity = client.getVarbitValue(QUANTITIES[i]);
+			if (raw[2 * i] != type || raw[2 * i + 1] != quantity)
+			{
+				raw[2 * i] = type;
+				raw[2 * i + 1] = quantity;
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	/** The varbit holds a pouch slot's rune or quantity. */

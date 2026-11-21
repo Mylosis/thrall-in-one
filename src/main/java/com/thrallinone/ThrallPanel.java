@@ -3,6 +3,7 @@ package com.thrallinone;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Font;
 import java.awt.Graphics2D;
@@ -14,6 +15,7 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,12 +27,15 @@ import java.util.Set;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
@@ -48,19 +53,20 @@ import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.ImageUtil;
 
 /**
- * The sidebar panel: stats to look at and compare. From the top: lifetime
+ * The sidebar panel: stats to look at and compare. From the top: the
+ * "What's New" box after an update (until closed, {@link UpdateNoticeBox}), lifetime
  * tiles (summoned, prayer drained, gp spent), then boxes for this session,
  * lifetime, Mage / Ranged / Melee, raids and casts left, and a records
  * reset. Each box folds away from its title, and stays folded after a
  * restart. In RuneLite's developer mode, buttons at the very bottom preview
- * each reminder. Updates arrive from {@link ThrallFights} and
+ * each reminder and the newest update notes. Updates arrive from {@link ThrallFights} and
  * {@link ThrallCasts} as copies, on the Swing thread; button actions go back
  * on the client thread.
  */
 class ThrallPanel extends PluginPanel
 {
 	/** Box titles: an Arceuus purple, so the panel has its own identity. */
-	private static final Color ACCENT = new Color(0xB4, 0x8C, 0xFF);
+	static final Color ACCENT = new Color(0xB4, 0x8C, 0xFF);
 	/** Casts left below the low mark. */
 	private static final Color LOW_COLOR = new Color(230, 150, 30);
 	/** Column headings, quieter than labels. */
@@ -75,10 +81,13 @@ class ThrallPanel extends PluginPanel
 	private static final Font TRIO_VALUE_FONT = FontManager.getRunescapeBoldFont().deriveFont(24f);
 	/** Values in the other tiles (this session, lifetime, casts left). */
 	private static final Font TILE_VALUE_FONT = FontManager.getRunescapeBoldFont().deriveFont(20f);
-	private static final Font TITLE_FONT = FontManager.getRunescapeBoldFont().deriveFont(18f);
+	static final Font TITLE_FONT = FontManager.getRunescapeBoldFont().deriveFont(18f);
 	/** The ⓘ in a box title, in the title purple; lighter while the mouse is over it. */
 	private static final ImageIcon INFO_ICON = infoIcon(ACCENT);
 	private static final ImageIcon INFO_ICON_HOVER = infoIcon(new Color(0xCF, 0xB4, 0xFF));
+	/** Low on runes: a triangle beside the casts count, and a dot on the sidebar button. */
+	private static final ImageIcon WARN_ICON = warnIcon();
+	private static final BufferedImage NAV_ICON_LOW = withLowDot(ThrallInOnePlugin.NAV_ICON);
 	/** Hidden setting: the ids of the folded boxes, comma separated. */
 	static final String FOLDED_KEY = "panelFolded";
 
@@ -87,7 +96,11 @@ class ThrallPanel extends PluginPanel
 	private final ThrallCasts casts;
 	private final ThrallReminders reminders;
 	private final ConfigManager configManager;
+	private final UpdateNotifier updateNotifier;
 	private final Set<String> folded = new LinkedHashSet<>();
+	/** The "What's New" box at the very top, while there are notes to show. */
+	@Nullable
+	private UpdateNoticeBox noticeBox;
 
 	private final Tile summonedTile = new Tile(ColorScheme.DARKER_GRAY_COLOR, true);
 	private final Tile prayerTile = new Tile(ColorScheme.DARKER_GRAY_COLOR, true);
@@ -105,13 +118,15 @@ class ThrallPanel extends PluginPanel
 
 	@Inject
 	ThrallPanel(ClientThread clientThread, ThrallFights fights, ThrallCasts casts, ThrallReminders reminders,
-		ConfigManager configManager, ItemManager itemManager, SkillIconManager skillIcons, @Named("developerMode") boolean developerMode)
+		ConfigManager configManager, ItemManager itemManager, SkillIconManager skillIcons, UpdateNotifier updateNotifier,
+		@Named("developerMode") boolean developerMode)
 	{
 		this.clientThread = clientThread;
 		this.fights = fights;
 		this.casts = casts;
 		this.reminders = reminders;
 		this.configManager = configManager;
+		this.updateNotifier = updateNotifier;
 		readFolded();
 
 		// Narrow sides, so the trio's labels fit at the regular font's size.
@@ -130,10 +145,9 @@ class ThrallPanel extends PluginPanel
 		lifetimeBox = new FoldingBox("lifetime", "Lifetime");
 		typeBox = new FoldingBox("byType", "By Type");
 		raidsBox = new FoldingBox("raids", "Raids");
-		castsBox = new FoldingBox("casts", "Casts Left");
-		castsBox.setInfo("<html>Counted from what you carry right now: the runes in your inventory<br>"
-			+ "and rune pouch, plus a staff or tome you're wearing. Your bank<br>"
-			+ "isn't counted, so restocking brings the number back up.</html>");
+		castsBox = new FoldingBox("casts", "Casts Remaining");
+		castsBox.setInfo("<html>Counts the runes you carry: inventory, rune pouch,<br>"
+			+ "and any staff or tome you wear. Not your bank.</html>");
 		add(sessionBox);
 		add(lifetimeBox);
 		add(typeBox);
@@ -150,7 +164,7 @@ class ThrallPanel extends PluginPanel
 		// RuneLite's developer mode (./gradlew run), never to players.
 		if (developerMode)
 		{
-			FoldingBox previewBox = new FoldingBox("preview", "Preview Reminder");
+			FoldingBox previewBox = new FoldingBox("preview", "Preview");
 			previewBox.setContent(previewButtons());
 			add(previewBox);
 		}
@@ -167,14 +181,38 @@ class ThrallPanel extends PluginPanel
 		}
 
 		showSession(new FightTotals(), 0);
-		showCasts(true, -1, ThrallTier.GREATER, false, true);
+		showCasts(-1, ThrallTier.GREATER, false, RuneWarning.NONE, true);
 		showRecords(new ThrallRecords());
+		updateNotes();
 	}
 
 	@Override
 	public void onActivate()
 	{
+		updateNotes();
 		refresh();
+	}
+
+	/** Show the update notes the player hasn't closed, or remove the box. Swing thread. */
+	void updateNotes()
+	{
+		if (noticeBox != null)
+		{
+			remove(noticeBox);
+			noticeBox = null;
+		}
+		List<UpdateNotice.Notice> notes = updateNotifier.pending();
+		if (!notes.isEmpty())
+		{
+			noticeBox = new UpdateNoticeBox(notes, () ->
+			{
+				updateNotifier.close();
+				updateNotes();
+			});
+			add(noticeBox, 0);
+		}
+		revalidate();
+		repaint();
 	}
 
 	/** Ask everything that feeds the panel to send what it has now. Any thread. */
@@ -200,26 +238,46 @@ class ThrallPanel extends PluginPanel
 			button.addActionListener(e -> clientThread.invoke(() -> reminders.preview(reminder)));
 			buttons.add(button);
 		}
-		return buttons;
+
+		// Full width under the reminders: it isn't one of them.
+		JButton notes = new JButton("Update Notes");
+		notes.setFocusPainted(false);
+		notes.setToolTipText("Show the newest update notes at the top of this panel, and their chat line if you're"
+			+ " logged in (unless Show Update Notes is off)");
+		notes.addActionListener(e -> clientThread.invoke(() ->
+		{
+			updateNotifier.showLatestForTesting();
+			SwingUtilities.invokeLater(this::updateNotes);
+		}));
+		JPanel content = new JPanel(new BorderLayout(0, 4));
+		content.setOpaque(false);
+		content.add(buttons, BorderLayout.CENTER);
+		content.add(notes, BorderLayout.SOUTH);
+		return content;
 	}
 
-	/** Casts left for the tier we'd cast next; -1 before it's counted. Hidden while Casts Left is off. Swing thread. */
-	void showCasts(boolean enabled, int left, ThrallTier tier, boolean low, boolean canSummon)
+	/**
+	 * Casts left for the tier we'd cast next; -1 before it's counted. Low
+	 * turns the count orange. The casts warning ({@link RuneWarning}, the
+	 * same one the game screen shows) adds its words on the count's line and
+	 * the dot on the sidebar button. Swing thread.
+	 */
+	void showCasts(int left, ThrallTier tier, boolean low, RuneWarning warning, boolean canSummon)
 	{
-		castsBox.setVisible(enabled);
+		showLowDot(warning != RuneWarning.NONE);
 		JPanel content = new JPanel(new DynamicGridLayout(0, 1, 0, 6));
 		content.setOpaque(false);
 		Tile tile = new Tile(ColorScheme.DARK_GRAY_COLOR, false);
+		tile.setWarning(warning == RuneWarning.NONE ? null : warning == RuneWarning.OUT ? "Out of Runes" : "Low on Runes");
 		// Casts left shows from login, before any fight.
 		if (left < 0)
 		{
-			tile.set("-", "Counted Once Logged In", Color.WHITE, null);
+			tile.set("-", "Shown Once You Log In", Color.WHITE, null);
 		}
 		else
 		{
 			tile.set(StatsFormat.number(left), tier.getDisplayName() + " Thralls", low ? LOW_COLOR : Color.WHITE,
-				tier.getDisplayName() + " thralls the runes you carry pay for, counting the rune pouch,"
-					+ " staves and combination runes");
+				tier.getDisplayName() + " thralls you can cast with what you carry");
 		}
 		content.add(tile);
 		if (left >= 0 && !canSummon)
@@ -248,13 +306,13 @@ class ThrallPanel extends PluginPanel
 			StatsFormat.number(records.getSummons()) + " thralls summoned on this account");
 		prayerTile.set(StatsFormat.shortNumber(records.getPrayerSpent()), "Drained", Color.WHITE,
 			StatsFormat.number(records.getPrayerSpent())
-				+ " prayer points drained by your Resurrect casts: 2, 4 or 6 for lesser, superior or greater");
+				+ " prayer points spent on Resurrect casts");
 		long gp = records.getGpSpent();
 		gpTile.set(StatsFormat.shortNumber(gp), "GP Spent", gp >= 10_000_000 ? GP_GREEN : gp >= 100_000 ? Color.WHITE : GP_YELLOW,
-			StatsFormat.number(gp) + " gp spent on runes: what your casts' runes were worth on the day of each cast");
+			StatsFormat.number(gp) + " gp of runes, priced on the day of each cast");
 
 		lifetimeBox.setContent(totalsTiles(lifetime, StatsFormat.longDuration(lifetime.getTicks()), "Fight Time",
-			"Time in fights that counted, with or without your thrall out"));
+			"Time in counted fights, thrall out or not"));
 
 		typeBox.setContent(typeTable(records));
 
@@ -275,18 +333,18 @@ class ThrallPanel extends PluginPanel
 		tiles.setOpaque(false);
 		Color tileColor = ColorScheme.DARK_GRAY_COLOR;
 		tiles.add(new Tile(tileColor, false).set(StatsFormat.shortNumber(totals.getThrallDamage()), "Thrall Damage",
-			Color.WHITE, StatsFormat.number(totals.getThrallDamage()) + " damage from your thrall; yours was "
+			Color.WHITE, "Your thrall hit " + StatsFormat.number(totals.getThrallDamage()) + ". You hit "
 				+ StatsFormat.number(totals.getOwnDamage())));
 		tiles.add(new Tile(tileColor, false).set(StatsFormat.shortNumber(totals.getFights()), "Fights", Color.WHITE,
-			"Fights that counted: your thrall was out during the fight or in the 10 minutes before it"));
+			"Fights with a thrall out, or one in the 10 minutes before"));
 		tiles.add(new Tile(tileColor, false).set(StatsFormat.percent(totals.share()), "Share", Color.WHITE,
-			"Your thrall's share of your damage (your hits plus its hits)"));
+			"Your thrall's part of your combined damage"));
 		tiles.add(new Tile(tileColor, false).set(StatsFormat.percent(totals.uptime()), "Uptime", Color.WHITE,
-			"How much of your fights your thrall was out"));
+			"How much of your fight time your thrall was out"));
 		double expected = totals.expectedDps();
 		tiles.add(new Tile(tileColor, false).set(StatsFormat.dps(totals.measuredDps()),
 			expected > 0 ? "DPS / " + StatsFormat.dps(expected) : "DPS", Color.WHITE,
-			"Measured while your thrall was out / the wiki's figure for its tier (lesser 0.208, superior 0.416, greater 0.625)"));
+			"Measured / the wiki's figure for its tier"));
 		tiles.add(new Tile(tileColor, false).set(lastValue, lastLabel, Color.WHITE, lastTooltip));
 		return tiles;
 	}
@@ -356,11 +414,26 @@ class ThrallPanel extends PluginPanel
 		Object[] second = {"Reset Everything", "Keep My Records"};
 		answer = JOptionPane.showOptionDialog(this,
 			"Really reset? " + StatsFormat.plural(savedFights, "fight", "fights") + " and "
-				+ StatsFormat.plural(savedSummons, "summon", "summons") + " will be gone for good. This can't be undone.",
+				+ StatsFormat.plural(savedSummons, "summon", "summons") + " will be gone for good.",
 			"Really Reset Thrall Records?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, second, second[1]);
 		if (answer == 0)
 		{
 			clientThread.invoke(fights::resetRecords);
+		}
+	}
+
+	/**
+	 * Fold the boxes as the current RuneLite profile saved them: after a
+	 * profile switch, so the old profile's folds aren't shown or saved over
+	 * the new one's. Swing thread.
+	 */
+	void reloadFolded()
+	{
+		folded.clear();
+		readFolded();
+		for (FoldingBox box : new FoldingBox[]{sessionBox, lifetimeBox, typeBox, raidsBox, castsBox})
+		{
+			box.updateFold();
 		}
 	}
 
@@ -411,6 +484,80 @@ class ThrallPanel extends PluginPanel
 		g.fillRect(7, 6, 2, 7);
 		g.dispose();
 		return new ImageIcon(image);
+	}
+
+	/** A 16 px warning triangle in the low color. */
+	private static ImageIcon warnIcon()
+	{
+		BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+		Graphics2D g = image.createGraphics();
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+		Path2D triangle = new Path2D.Double();
+		triangle.moveTo(8, 1.5);
+		triangle.lineTo(15, 14.5);
+		triangle.lineTo(1, 14.5);
+		triangle.closePath();
+		g.setColor(LOW_COLOR);
+		g.fill(triangle);
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+		g.setColor(ColorScheme.DARKER_GRAY_COLOR);
+		g.fillRect(7, 6, 2, 5);
+		g.fillRect(7, 12, 2, 2);
+		g.dispose();
+		return new ImageIcon(image);
+	}
+
+	/** The sidebar button's icon with an orange dot in its top right corner. */
+	private static BufferedImage withLowDot(BufferedImage icon)
+	{
+		BufferedImage image = new BufferedImage(icon.getWidth(), icon.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		Graphics2D g = image.createGraphics();
+		g.drawImage(icon, 0, 0, null);
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		int size = 7;
+		int x = image.getWidth() - size;
+		// A dark ring keeps the dot apart from the icon under it.
+		g.setColor(ColorScheme.DARKER_GRAY_COLOR);
+		g.fill(new Ellipse2D.Double(x - 1, -1, size + 2, size + 2));
+		g.setColor(LOW_COLOR);
+		g.fill(new Ellipse2D.Double(x, 0, size, size));
+		g.dispose();
+		return image;
+	}
+
+	/**
+	 * An orange dot on our sidebar button while casts are low, so it shows
+	 * with the panel closed. RuneLite has no call to change a button's icon,
+	 * and removing and re-adding the button can close our open panel, or open
+	 * the sidebar on the panel used before ours (ClientUI goes back through
+	 * its tab history when the selected tab is removed). So the icon is set
+	 * on the sidebar's own tab, whose component is our wrapped panel. If the
+	 * sidebar is off, or ever stops being a tabbed pane, nothing happens.
+	 * Swing thread.
+	 */
+	private void showLowDot(boolean low)
+	{
+		JPanel tab = getWrappedPanel();
+		Container sidebar = tab.getParent();
+		if (!(sidebar instanceof JTabbedPane))
+		{
+			return;
+		}
+		JTabbedPane tabs = (JTabbedPane) sidebar;
+		int index = tabs.indexOfComponent(tab);
+		if (index < 0)
+		{
+			return;
+		}
+		BufferedImage image = low ? NAV_ICON_LOW : ThrallInOnePlugin.NAV_ICON;
+		// RuneLite sizes sidebar icons itself; match whatever it drew.
+		Icon shown = tabs.getIconAt(index);
+		if (shown != null && (shown.getIconWidth() != image.getWidth() || shown.getIconHeight() != image.getHeight()))
+		{
+			image = ImageUtil.resizeImage(image, shown.getIconWidth(), shown.getIconHeight());
+		}
+		tabs.setIconAt(index, new ImageIcon(image));
 	}
 
 	@Nullable
@@ -493,6 +640,8 @@ class ThrallPanel extends PluginPanel
 	{
 		private final JLabel icon = new JLabel();
 		private final JLabel value = new JLabel();
+		/** A warning on the value's line, at the tile's right edge ("⚠ Low on Runes"); left-aligned tiles only. */
+		private final JLabel mark = new JLabel(WARN_ICON);
 		private final JLabel label = new JLabel();
 		private final Font valueFont;
 
@@ -514,9 +663,33 @@ class ThrallPanel extends PluginPanel
 			{
 				icon.setBorder(new EmptyBorder(0, 0, 4, 0));
 				add(icon);
+				add(value);
 			}
-			add(value);
+			else
+			{
+				// The value in a row of its own, so the warning can sit beside it.
+				JPanel valueRow = new JPanel();
+				valueRow.setLayout(new BoxLayout(valueRow, BoxLayout.X_AXIS));
+				valueRow.setOpaque(false);
+				valueRow.setAlignmentX(x);
+				mark.setFont(FontManager.getRunescapeFont());
+				mark.setForeground(LOW_COLOR);
+				mark.setBorder(new EmptyBorder(0, 6, 0, 3));
+				mark.setVisible(false);
+				valueRow.add(value);
+				// The warning sits at the tile's right edge, on the value's line.
+				valueRow.add(Box.createHorizontalGlue());
+				valueRow.add(mark);
+				add(valueRow);
+			}
 			add(label);
+		}
+
+		/** Show the warning triangle and these words after the value, or hide them (null). */
+		void setWarning(@Nullable String text)
+		{
+			mark.setText(text);
+			mark.setVisible(text != null);
 		}
 
 		Tile set(String valueText, String labelText, Color valueColor, @Nullable String tooltip)

@@ -18,10 +18,11 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
-import net.runelite.client.Notifier;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -32,8 +33,11 @@ import net.runelite.client.events.ConfigChanged;
  * we last cast (taken from our claimed thrall's NPC ID and saved to the
  * RuneLite profile), or greater before the first cast. Counted
  * on the game tick after the inventory, equipment, rune pouch or setting
- * changes, and sent to the sidebar panel. Below the "Low below" mark it can
- * notify once.
+ * changes, and sent to the sidebar panel. Below Warn Below, on the Arceuus
+ * spellbook with the Book of the Dead, there is one warning
+ * ({@link RuneWarning}): the sidebar shows it, and {@link ThrallReminders}
+ * shows it in game. It comes on 3 seconds late and never while the bank is
+ * open ({@link RuneWarningGate}), so gearing up doesn't set it off.
  */
 @Slf4j
 @Singleton
@@ -46,11 +50,13 @@ public class ThrallCasts
 	private final ThrallReminders reminders;
 	private final ThrallInOneConfig config;
 	private final ConfigManager configManager;
-	private final Notifier notifier;
 
 	private int castsLeft = -1;
-	/** The low-casts notification has fired for this drop below the low mark. */
-	private boolean lowNotified;
+	/** The warning as the runes stand at the last count. */
+	private RuneWarning due = RuneWarning.NONE;
+	/** The warning shown: {@link #due}, once the gate lets it through. */
+	private RuneWarning warning = RuneWarning.NONE;
+	private final RuneWarningGate gate = new RuneWarningGate();
 	/** Where the count goes; null while the sidebar panel is off. */
 	@Nullable
 	private volatile ThrallPanel panel;
@@ -62,29 +68,37 @@ public class ThrallCasts
 	@Nullable
 	private NPC seenOwned;
 	private boolean dirty;
+	/** Worn item ids by slot at the last worn change, or null before one. */
+	@Nullable
+	private int[] wornSeen;
 	/** What the panel was last sent, so a recount that changes nothing isn't sent again. */
 	@Nullable
 	private String pushed;
 
 	@Inject
 	ThrallCasts(Client client, ThrallTracker tracker, ThrallReminders reminders, ThrallInOneConfig config,
-		ConfigManager configManager, Notifier notifier)
+		ConfigManager configManager)
 	{
 		this.client = client;
 		this.tracker = tracker;
 		this.reminders = reminders;
 		this.config = config;
 		this.configManager = configManager;
-		this.notifier = notifier;
 	}
 
 	void reset()
 	{
 		castsLeft = -1;
+		due = RuneWarning.NONE;
+		warning = RuneWarning.NONE;
+		gate.reset();
+		reminders.setRuneWarning(warning);
 		canSummon = false;
 		lastTier = null;
 		lastTierLoaded = false;
 		seenOwned = null;
+		// Forget the worn ids too: the next worn change always recounts, whatever happened while we weren't listening.
+		wornSeen = null;
 		dirty = true;
 		pushed = null;
 		pushToPanel();
@@ -125,52 +139,56 @@ public class ThrallCasts
 		{
 			return;
 		}
-		boolean enabled = config.castsEnabled();
 		int left = castsLeft;
 		ThrallTier tier = getNextTier();
 		boolean low = isLow();
+		RuneWarning warn = warning;
 		boolean summon = canSummon;
-		String shown = enabled + "/" + left + "/" + tier + "/" + low + "/" + summon;
+		String shown = left + "/" + tier + "/" + low + "/" + warn + "/" + summon;
 		if (shown.equals(pushed))
 		{
 			return;
 		}
 		pushed = shown;
-		SwingUtilities.invokeLater(() -> target.showCasts(enabled, left, tier, low, summon));
-	}
-
-	/**
-	 * The low-casts notification, once per drop below the low mark: while we
-	 * could summon, and our thrall is out or we're fighting, so it doesn't
-	 * fire at the bank. Counting again above the mark re-arms it.
-	 */
-	private void checkLow()
-	{
-		if (castsLeft >= 0 && !isLow())
-		{
-			lowNotified = false;
-		}
-		else if (!lowNotified && canSummon && isLow() && (tracker.hasActiveThrall() || reminders.isInCombat()))
-		{
-			lowNotified = true;
-			// Counts as sent while off, so turning Casts Left back on doesn't fire for an old drop.
-			if (!config.castsEnabled())
-			{
-				return;
-			}
-			notifier.notify(config.lowCastsNotification(), castsLeft == 0
-				? "No thrall casts left"
-				: "Low on thrall casts: " + castsLeft + " left");
-		}
+		SwingUtilities.invokeLater(() -> target.showCasts(left, tier, low, warn, summon));
 	}
 
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
-		if (event.getContainerId() == InventoryID.INV || event.getContainerId() == InventoryID.WORN)
+		if (event.getContainerId() == InventoryID.INV)
 		{
 			dirty = true;
 		}
+		// The count only reads which items are worn, not how many: ammo used by every ranged attack
+		// changes the worn quantities alone, and needs no recount.
+		else if (event.getContainerId() == InventoryID.WORN && wornIdsChanged(event.getItemContainer()))
+		{
+			dirty = true;
+		}
+	}
+
+	/** Whether the worn item ids differ from the last worn change seen; remembers these. */
+	private boolean wornIdsChanged(@Nullable ItemContainer equipment)
+	{
+		Item[] items = equipment != null ? equipment.getItems() : new Item[0];
+		int[] seen = wornSeen;
+		boolean changed = seen == null || seen.length != items.length;
+		if (changed)
+		{
+			seen = new int[items.length];
+			wornSeen = seen;
+		}
+		for (int i = 0; i < items.length; i++)
+		{
+			int id = items[i].getId();
+			if (seen[i] != id)
+			{
+				seen[i] = id;
+				changed = true;
+			}
+		}
+		return changed;
 	}
 
 	@Subscribe
@@ -187,7 +205,7 @@ public class ThrallCasts
 	public void onConfigChanged(ConfigChanged event)
 	{
 		if (ThrallInOneConfig.GROUP.equals(event.getGroup())
-			&& ("castsWarnBelow".equals(event.getKey()) || "castsEnabled".equals(event.getKey())))
+			&& "castsWarnBelow".equals(event.getKey()))
 		{
 			dirty = true;
 		}
@@ -234,7 +252,22 @@ public class ThrallCasts
 			count();
 			pushToPanel();
 		}
-		checkLow();
+
+		// The bank only matters while a warning is waiting to come on.
+		boolean waiting = due != RuneWarning.NONE && warning == RuneWarning.NONE;
+		RuneWarning shown = gate.tick(due, waiting && isBankOpen());
+		if (shown != warning)
+		{
+			warning = shown;
+			reminders.setRuneWarning(shown);
+			pushToPanel();
+		}
+	}
+
+	private boolean isBankOpen()
+	{
+		Widget bank = client.getWidget(InterfaceID.Bankmain.UNIVERSE);
+		return bank != null && !bank.isHidden();
 	}
 
 	private void count()
@@ -281,6 +314,8 @@ public class ThrallCasts
 
 		canSummon = book && client.getVarbitValue(VarbitID.SPELLBOOK) == ThrallReminders.ARCEUUS_SPELLBOOK;
 		castsLeft = CastsCounter.castsLeft(getNextTier(), carried, worn);
+		due = RuneWarning.of(CastsCounter.castsWithCarried(getNextTier(), carried, worn),
+			config.castsWarnBelow(), canSummon);
 	}
 
 	@Nullable

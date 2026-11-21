@@ -32,7 +32,7 @@ class ThrallReminderOverlay extends Overlay
 
 	private final ThrallReminders reminders;
 	private final ThrallInOneConfig config;
-	private final List<String> lines = new ArrayList<>(3);
+	private final List<String> lines = new ArrayList<>(4);
 
 	@Inject
 	ThrallReminderOverlay(ThrallReminders reminders, ThrallInOneConfig config)
@@ -59,6 +59,11 @@ class ThrallReminderOverlay extends Overlay
 		if (reminders.showMissingBook())
 		{
 			lines.add("No Book of the Dead");
+		}
+		String runes = reminders.runeWarningText();
+		if (runes != null)
+		{
+			lines.add(runes);
 		}
 		if (lines.isEmpty())
 		{

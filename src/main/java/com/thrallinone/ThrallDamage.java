@@ -180,7 +180,10 @@ public class ThrallDamage
 			log.debug("Hitsplat {} (type {}, mine {}) on {} at tick {}",
 				hitsplat.getAmount(), hitsplat.getHitsplatType(), hitsplat.isMine(), target.getName(), tick);
 		}
-		if (!hitsplat.isMine() || hitsplat.getAmount() > THRALL_MAX_HIT || target == client.getLocalPlayer())
+		// Unnamed NPCs are hidden helpers (ThrallFights.isNamed): their hitsplats are bookkeeping, and
+		// matching one would use up the expected hit that belongs on the real target.
+		if (!hitsplat.isMine() || hitsplat.getAmount() > THRALL_MAX_HIT || target == client.getLocalPlayer()
+			|| !ThrallFights.isNamed(target.getName()))
 		{
 			return;
 		}

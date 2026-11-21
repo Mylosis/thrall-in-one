@@ -13,6 +13,8 @@ import net.runelite.api.events.ActorDeath;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.RuneScapeProfileChanged;
 
@@ -189,7 +191,10 @@ public class ThrallFights
 			// Where no thrall can be summoned, not having one out isn't a lapse.
 			thrallOutBeforeFight = thrallOut() || recentThrall && !noSummon.isNoSummonHere();
 			targetDiedTick = -1;
-			log.debug("Fight started at tick {} (raid {}, template region {})", tick, current.getRaid(), BossKey.templateRegion(client));
+			if (log.isDebugEnabled())
+			{
+				log.debug("Fight started at tick {} (raid {}, template region {})", tick, current.getRaid(), BossKey.templateRegion(client));
+			}
 		}
 		return current;
 	}
@@ -300,8 +305,19 @@ public class ThrallFights
 	}
 
 	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (event.getContainerId() == InventoryID.INV)
+		{
+			summons.inventoryChanged();
+		}
+	}
+
+	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
+		// Logins, hops and loads can swap the inventory without an event we rely on: read it afresh.
+		summons.inventoryChanged();
 		switch (event.getGameState())
 		{
 			case LOGIN_SCREEN:

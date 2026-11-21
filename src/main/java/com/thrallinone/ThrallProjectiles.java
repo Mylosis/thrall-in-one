@@ -1,6 +1,5 @@
 package com.thrallinone;
 
-import com.google.common.collect.ImmutableSet;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Set;
@@ -28,13 +27,6 @@ import net.runelite.client.eventbus.Subscribe;
 @Singleton
 public class ThrallProjectiles
 {
-	/** Projectiles fired by ghostly and skeletal thralls, including the Leagues imp cosmetics. */
-	private static final Set<Integer> THRALL_PROJECTILES = ImmutableSet.of(
-		SpotanimID.THRALL_MAGIC_TRAVEL,
-		SpotanimID.THRALL_RANGED_TRAVEL,
-		SpotanimID.LEAGUES_6_THRALL_IMP_MAGIC_ATTACK_VFX_PROJANIM,
-		SpotanimID.LEAGUES_6_THRALL_IMP_RANGED_ATTACK_VFX_PROJANIM);
-
 	private final ThrallTracker tracker;
 
 	/** Thrall projectiles already judged. */
@@ -48,9 +40,23 @@ public class ThrallProjectiles
 		this.tracker = tracker;
 	}
 
+	/**
+	 * Projectiles fired by ghostly and skeletal thralls, including the Leagues
+	 * imp cosmetics. Read for every projectile in the scene, so a switch: no
+	 * boxing of the id.
+	 */
 	static boolean isThrallProjectile(int id)
 	{
-		return THRALL_PROJECTILES.contains(id);
+		switch (id)
+		{
+			case SpotanimID.THRALL_MAGIC_TRAVEL:
+			case SpotanimID.THRALL_RANGED_TRAVEL:
+			case SpotanimID.LEAGUES_6_THRALL_IMP_MAGIC_ATTACK_VFX_PROJANIM:
+			case SpotanimID.LEAGUES_6_THRALL_IMP_RANGED_ATTACK_VFX_PROJANIM:
+				return true;
+			default:
+				return false;
+		}
 	}
 
 	/** The projectile was fired from the thrall's tile. */

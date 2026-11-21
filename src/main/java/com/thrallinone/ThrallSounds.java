@@ -8,7 +8,11 @@ import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Singleton;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
 import net.runelite.api.NPC;
+import net.runelite.api.Preferences;
+import net.runelite.api.SoundEffectVolume;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.events.AreaSoundEffectPlayed;
 import net.runelite.api.events.SoundEffectPlayed;
@@ -25,6 +29,7 @@ import net.runelite.client.events.ProfileChanged;
  * alone. The Deadman thralls (Zuk, Kalphite Princess and Wisp) have no sounds
  * of their own in the game's data, so they are covered by the standard ones.
  */
+@Slf4j
 @Singleton
 public class ThrallSounds
 {
@@ -64,6 +69,7 @@ public class ThrallSounds
 	private static final Predicate<NPC> ANY_THRALL = npc -> true;
 	private static final Predicate<NPC> IMP = npc -> ThrallNpcs.isImp(npc.getId());
 
+	private final Client client;
 	private final ThrallInOneConfig config;
 	private final ThrallTracker tracker;
 
@@ -73,10 +79,44 @@ public class ThrallSounds
 	private volatile boolean muteSummons;
 
 	@Inject
-	ThrallSounds(ThrallInOneConfig config, ThrallTracker tracker)
+	ThrallSounds(Client client, ThrallInOneConfig config, ThrallTracker tracker)
 	{
+		this.client = client;
 		this.config = config;
 		this.tracker = tracker;
+	}
+
+	/** Play Recast Sound at a volume of 1-100%; Off plays nothing. Client thread. */
+	void playReminder(ReminderSound sound, int volumePercent)
+	{
+		if (sound != ReminderSound.OFF)
+		{
+			playGameSound(sound.getSoundId(), volumePercent);
+		}
+	}
+
+	/**
+	 * Play one of the game's sounds at a volume of 1-100%, whatever the game's
+	 * sound effect volume and the mute settings. The client plays a sound at
+	 * the game's volume unless that's muted, so the game's volume is set to
+	 * ours just for this call and put straight back: the sound takes its
+	 * volume as it's queued. Client thread.
+	 */
+	private void playGameSound(int soundId, int volumePercent)
+	{
+		int volume = volumePercent * SoundEffectVolume.HIGH / 100;
+		Preferences preferences = client.getPreferences();
+		int gameVolume = preferences.getSoundEffectVolume();
+		// The client mixes this sound in directly, with no SoundEffectPlayed event, so muting never sees it.
+		try
+		{
+			preferences.setSoundEffectVolume(volume);
+			client.playSoundEffect(soundId, volume);
+		}
+		finally
+		{
+			preferences.setSoundEffectVolume(gameVolume);
+		}
 	}
 
 	private static Set<Integer> range(int first, int last)

@@ -43,59 +43,52 @@ class ThrallOutlineOverlay extends Overlay
 
 		int width = config.outlineWidth();
 		int feather = FEATHER;
-		ColorByType byType = config.colorByType();
+		if (!outlineOthers)
+		{
+			// Only ours to draw: no need to walk every thrall in the scene.
+			NPC owned = tracker.getOwned();
+			if (owned != null && tracker.isListed(owned))
+			{
+				outlineRenderer.drawOutline(owned, width, ownColor(owned), feather);
+			}
+			return null;
+		}
 		for (NPC npc : tracker.getThralls())
 		{
 			if (tracker.isOwned(npc))
 			{
 				if (outlineOwn)
 				{
-					outlineRenderer.drawOutline(npc, width, byType.isYours() ? ownTypeColor(npc) : config.ownColor(), feather);
+					outlineRenderer.drawOutline(npc, width, ownColor(npc), feather);
 				}
 			}
 			else if (outlineOthers)
 			{
-				outlineRenderer.drawOutline(npc, width, byType.isOthers() ? othersTypeColor(npc) : config.othersColor(), feather);
+				outlineRenderer.drawOutline(npc, width, othersColor(npc), feather);
 			}
 		}
 		return null;
 	}
 
-	/** Your Type Colors for this thrall's type, or Your Color if its type isn't known. */
-	private Color ownTypeColor(NPC npc)
+	/** Your thrall's outline color for its type; Mage if its type isn't known. */
+	private Color ownColor(NPC npc)
 	{
 		ThrallType type = ThrallType.of(npc.getId());
-		if (type == null)
+		if (type == ThrallType.RANGED)
 		{
-			return config.ownColor();
+			return config.rangedColor();
 		}
-		switch (type)
-		{
-			case MAGIC:
-				return config.magicColor();
-			case RANGED:
-				return config.rangedColor();
-			default:
-				return config.meleeColor();
-		}
+		return type == ThrallType.MELEE ? config.meleeColor() : config.magicColor();
 	}
 
-	/** Others' Type Colors for this thrall's type, or Others' Color if its type isn't known. */
-	private Color othersTypeColor(NPC npc)
+	/** Other players' outline color for the thrall's type; Mage if its type isn't known. */
+	private Color othersColor(NPC npc)
 	{
 		ThrallType type = ThrallType.of(npc.getId());
-		if (type == null)
+		if (type == ThrallType.RANGED)
 		{
-			return config.othersColor();
+			return config.othersRangedColor();
 		}
-		switch (type)
-		{
-			case MAGIC:
-				return config.othersMagicColor();
-			case RANGED:
-				return config.othersRangedColor();
-			default:
-				return config.othersMeleeColor();
-		}
+		return type == ThrallType.MELEE ? config.othersMeleeColor() : config.othersMagicColor();
 	}
 }
